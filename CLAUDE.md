@@ -6,8 +6,10 @@ Claude Code mod (function-hook plugin): a pane listing the git worktrees the cur
 
 - Read-only. The mod runs only read-only commands: git `worktree list`, `--no-optional-locks status`, `rev-list`,
   `diff --shortstat`, `diff --name-status`, `log`, `rev-parse`; `sh -c 'echo $PPID'` and `ps -o lstart= -p <pid>` to
-  match a worktree's lock to this session's process; and `$.agent.list()`. Never add a git mutation, tmux call, or
-  worktree switch/remove. Actions are prompts sent with `$.prompt.submit` or `$.ui.view`; Claude does the work.
+  match a worktree's lock to this session's process; and `$.agent.list()`. It reads files only to find worktrees: the
+  session's own transcript and its subagents' (`$.session.info().transcriptPath`). Never add a git mutation, tmux
+  call, or worktree switch/remove. Actions are prompts sent with `$.prompt.submit` or `$.ui.view`; Claude does the
+  work.
 - Every prompt ends with the `READ_ONLY` sentence in `hooks/pane.tsx`.
 - State the pane draws lives in `$.state` atoms (`tracked`, `grove`, `problems`, `expanded`), declared in
   `types/index.d.ts`. Each file that reads an atom declares it itself (the engine requires it); change a stored
@@ -25,7 +27,10 @@ Claude Code mod (function-hook plugin): a pane listing the git worktrees the cur
   touches, matches locks to this session's process, claims worktrees its agents work in (innermost folder wins),
   snapshots this session's worktrees, reads other worktrees once a minute, toasts finished agents.
 - `hooks/pane.tsx`: the pane (THIS SESSION cards, PROBLEMS IN THIS SESSION, OTHER WORKTREES rows) and the band.
-- `hooks/detect.ts`: pure parsing: `git worktree add` in a Bash command, `worktree list --porcelain`, lock text.
+- `hooks/detect.ts`: pure parsing: `git worktree add` in a Bash command, `worktree list --porcelain`, lock text,
+  transcript lines.
+- `hooks/history.ts`: on the first refresh, reads the session's and its subagents' transcripts for worktrees made
+  before the plugin loaded; `refresh` keeps those that still exist.
 - `hooks/*.test.ts(x)`: tests; each hook in a test stands for the engine.
 - `.claude-plugin/types/`: written by Claude Code on load, not edited, not committed.
 

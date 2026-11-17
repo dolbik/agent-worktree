@@ -1,6 +1,17 @@
 import { expect, test } from 'claude-code/testing'
 
-import { deepest, firstLine, parseLock, parseWorktreeList, resolvePath, worktreeAdds } from './detect'
+import {
+  deepest,
+  firstLine,
+  isMadeLine,
+  madeIn,
+  parseLock,
+  parseWorktreeList,
+  resolvePath,
+  utf8Length,
+  wholeLines,
+  worktreeAdds,
+} from './detect'
 
 test('worktreeAdds finds the folder git runs in and the path word', async () => {
   expect(worktreeAdds('git worktree add -q ../side -b side')).toEqual([{ dir: null, path: '../side' }])
@@ -69,4 +80,63 @@ test('firstLine gives the cause of a failed call', async () => {
   expect(firstLine("Preparing worktree (checking out 'b')\nfatal: 'b' is already used by worktree at '/x'")).toBe(
     "'b' is already used by worktree at '/x'",
   )
+})
+
+test('wholeLines keeps only whole lines and counts their bytes', async () => {
+  expect(wholeLines('a\nбв\nhalf', false)).toEqual({ lines: ['a', 'бв'], bytes: 7 })
+  expect(wholeLines('a\nlast', true)).toEqual({ lines: ['a', 'last'], bytes: 6 })
+  expect(wholeLines('no break at all', false)).toEqual({ lines: [], bytes: 0 })
+  expect(utf8Length('aб€😀')).toBe(1 + 2 + 3 + 4)
+})
+
+test('madeIn reads made and entered worktrees from transcript lines', async () => {
+  const lines = [
+    JSON.stringify({
+      type: 'assistant',
+      cwd: '/repo',
+      timestamp: '2026-11-12T08:38:41.000Z',
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            name: 'Bash',
+            input: { command: 'cd /other && git worktree add -q -b x .claude/worktrees/x main' },
+          },
+          { type: 'tool_use', name: 'Bash', input: { command: 'git -C "$A" worktree add "$A/wt"' } },
+        ],
+      },
+    }),
+    JSON.stringify({
+      type: 'user',
+      cwd: '/repo',
+      timestamp: '2026-11-12T09:00:00.000Z',
+      toolUseResult: {
+        worktreePath: '/repo/.claude/worktrees/y',
+        worktreeBranch: 'y',
+        message: 'Created worktree at /repo',
+      },
+    }),
+    JSON.stringify({
+      type: 'user',
+      toolUseResult: { worktreePath: '/repo/.claude/worktrees/y', message: 'Exited worktree. Your work is preserved' },
+    }),
+    'not json',
+  ]
+  expect(lines.filter(isMadeLine).length).toBe(3)
+  expect(madeIn(lines, '/home/u', { agentId: 's1', label: 'helper' })).toEqual([
+    {
+      path: '/other/.claude/worktrees/x',
+      how: 'bash',
+      at: Date.parse('2026-11-12T08:38:41.000Z'),
+      agentId: 's1',
+      label: 'helper',
+    },
+    {
+      path: '/repo/.claude/worktrees/y',
+      how: 'enter',
+      at: Date.parse('2026-11-12T09:00:00.000Z'),
+      agentId: 's1',
+      label: 'helper',
+    },
+  ])
 })

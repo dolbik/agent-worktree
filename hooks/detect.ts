@@ -1,3 +1,5 @@
+import type { Tracked } from '../types'
+
 export type Listed = { path: string; branch?: string; lock?: string }
 
 export const parseWorktreeList = (porcelain: string): Listed[] =>
@@ -151,3 +153,71 @@ export const worktreeAdds = (command: string): WorktreeAdd[] => {
 
   return found
 }
+
+// a range of text read from a file: the whole lines in it and their size in bytes
+export const wholeLines = (text: string, isLast: boolean) => {
+  const end = isLast ? text.length : text.lastIndexOf('\n') + 1
+  const whole = text.slice(0, end)
+
+  return { lines: whole.split('\n').filter(line => line !== ''), bytes: utf8Length(whole) }
+}
+
+export const utf8Length = (text: string) =>
+  text.length +
+  (text.match(/[\u0080-\u07ff]/g)?.length ?? 0) +
+  2 * (text.match(/[\u0800-\ud7ff\ue000-\uffff]/g)?.length ?? 0) +
+  (text.match(/[\ud800-\udfff]/g)?.length ?? 0)
+
+export type Found = Pick<Tracked, 'path' | 'how' | 'agentId' | 'label' | 'at' | 'isBackground'>
+
+type Block = { type?: string; name?: string; input?: { command?: unknown } }
+type Line = {
+  cwd?: string
+  timestamp?: string
+  message?: { content?: unknown }
+  toolUseResult?: { worktreePath?: string; message?: string }
+}
+
+const lineOf = (text: string): Line | undefined => {
+  try {
+    return JSON.parse(text) as Line
+  } catch {
+    return undefined
+  }
+}
+
+// only lines that can hold an EnterWorktree result or a Bash `git worktree add` are parsed
+export const isMadeLine = (text: string) =>
+  text.includes('"toolUseResult":{"worktreePath"') || (text.includes('worktree add') && text.includes('"name":"Bash"'))
+
+// worktrees a transcript's lines show being made or entered; a Bash path resolves against the line's cwd
+export const madeIn = (texts: string[], home: string, who: Pick<Found, 'agentId' | 'label'> = {}): Found[] =>
+  texts.flatMap((text): Found[] => {
+    const line = lineOf(text)
+    const at = line?.timestamp ? Date.parse(line.timestamp) : undefined
+    const result = line?.toolUseResult
+    const kind = /^(Created|Entered|Resumed) worktree/.exec(result?.message ?? '')?.[1]
+    if (result?.worktreePath && kind)
+      return [
+        { path: result.worktreePath, how: kind === 'Created' ? ('enter' as const) : ('entered' as const), at, ...who },
+      ]
+    const content = line?.message?.content
+    const cwd = line?.cwd
+    if (!Array.isArray(content) || !cwd) return []
+
+    return (content as Block[])
+      .filter(block => block.type === 'tool_use' && block.name === 'Bash')
+      .flatMap(block => worktreeAdds(String(block.input?.command ?? '')))
+      .flatMap(add =>
+        add.path === null
+          ? []
+          : [
+              {
+                path: resolvePath(resolvePath(cwd, add.dir ?? '.', home), add.path, home),
+                how: 'bash' as const,
+                at,
+                ...who,
+              },
+            ],
+      )
+  })

@@ -55,8 +55,9 @@ bar, last commit and sparkline, and shortens its buttons.
 - **This session**: every worktree the session or any of its subagents made,
   in any folder or repository: with the `EnterWorktree` tool, an agent started
   with `isolation: "worktree"`, or `git worktree add` run through Bash. A
-  worktree made before the mod loaded is found by its lock, which names this
-  session's process; one an agent works in is claimed for the session. Each
+  worktree made before the mod loaded is found in the session's transcript and
+  its subagents' (read once, when the mod loads), or by its lock, which names
+  this session's process; one an agent works in is claimed for the session. Each
   card says who made it and when. A worktree stays here after its agent ends.
   The worktree the session is in is marked `★ here`.
 - **Problems in this session**: one line per failed worktree call (a refused
@@ -142,7 +143,8 @@ the mod.
 | `hooks/register.tsx` | The hooks: tool-call recording, command, drawing |
 | `hooks/scan.ts` | Reading git and `$.agent.list()` every 5 s |
 | `hooks/pane.tsx` | The pane and the band above the prompt |
-| `hooks/detect.ts` | Reading `git worktree add` commands, worktree lists and locks |
+| `hooks/detect.ts` | Reading `git worktree add` commands, worktree lists, locks and transcript lines |
+| `hooks/history.ts` | Reading the session's transcripts for worktrees made before the mod loaded |
 | `hooks/*.test.ts(x)` | Tests |
 | `types/index.d.ts` | The mod's `$.state` contract |
 

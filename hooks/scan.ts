@@ -4,6 +4,7 @@ import type { AgentInfo, EngineInterface } from 'claude-code'
 import type { AgentBadge, FileChange, Problem, Row, Snap, Tracked } from '../types'
 import { deepest, isInside, parseLock, parseWorktreeList } from './detect'
 import type { Listed } from './detect'
+import { madeBefore } from './history'
 
 export const PANE = 'agent-worktree'
 export const ACTIVE = ['pending', 'running', 'waiting']
@@ -116,6 +117,7 @@ async function rowOf($: EngineInterface, one: Listed & { repo: string }, base?: 
 }
 
 let own: { pid: number; startedAt: string } | null | undefined
+let isHistoryRead = false
 
 // Claude Code locks a worktree it makes with `claude session <name> (pid <its pid> start <its start, UTC>)`
 async function ownProcess($: EngineInterface) {
@@ -199,6 +201,8 @@ export function refresh($: EngineInterface, isFull = false) {
 }
 
 async function refreshNow($: EngineInterface, isFull: boolean) {
+  const found = isHistoryRead ? [] : await madeBefore($).catch(() => [])
+  isHistoryRead = true
   const now = await $.clock.now()
   const before = await read($, tracked)
   const sessionDir = before.find(one => one.isHere)?.path ?? (await $.session.cwd())
@@ -208,6 +212,7 @@ async function refreshNow($: EngineInterface, isFull: boolean) {
   const seeds = [
     sessionDir,
     ...liveTracked(before).map(one => one.path),
+    ...found.map(one => one.path),
     ...agents
       .filter(agent => ACTIVE.includes(agent.status) || before.some(one => one.path === '' && one.agentId === agent.id))
       .map(agent => agent.cwd),
@@ -254,6 +259,9 @@ async function refreshNow($: EngineInterface, isFull: boolean) {
     adds.push({ ...entry, isRunning: false, isHere: false, isRemoved: false })
     mine.add(entry.path)
   }
+  for (const one of found)
+    if (paths.includes(one.path) && !mine.has(one.path))
+      add({ ...one, branch: branchOf(one.path), toolUseId: `history:${one.path}` })
   const lockedHere = listed.filter(one => !mine.has(one.path) && one.lock && parseLock(one.lock))
   if (lockedHere.length > 0 && own === undefined) own = (await ownProcess($)) ?? null
   for (const one of lockedHere) {

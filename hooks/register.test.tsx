@@ -51,6 +51,7 @@ type World = {
   per: Record<string, Partial<Answers>>
   pid?: { pid: number; start: string }
   gone: Set<string>
+  files: Record<string, string>
   pidReads: number
   gitDirs: string[]
   sent: string[]
@@ -92,6 +93,7 @@ const world = (on: On, repos: Record<string, Wt[]>, cwd = '/repo'): World => {
     agents: [],
     per: {},
     gone: new Set(),
+    files: {},
     pidReads: 0,
     gitDirs: [],
     sent: [],
@@ -123,6 +125,20 @@ const world = (on: On, repos: Record<string, Wt[]>, cwd = '/repo'): World => {
   })
   on('agent.list', () => ({ value: w.agents }))
   on('fs.exists', (_, e) => ({ value: !w.gone.has(e.path) }))
+  on('session.info', () => ({ value: { transcriptPath: '/t/s.jsonl' } as never }))
+  on('fs.stat', (_, e) => ({ value: { kind: 'file', size: (w.files[e.path] ?? '').length } as never }))
+  on('fs.read', (_, e) => {
+    const text = w.files[e.path]
+    if (text === undefined) throw new Error(`no file ${e.path}`)
+    const offset = e.offset ?? 0
+
+    return { value: text.slice(offset, e.length === undefined ? undefined : offset + e.length) }
+  })
+  on('fs.list', (_, e) => ({
+    value: Object.keys(w.files)
+      .filter(path => path.startsWith(`${e.path}/`))
+      .map(path => ({ name: path.slice(e.path.length + 1), kind: 'file' }) as never),
+  }))
   on('process.run', (_, e) => {
     const [command] = e.argv
     if (command === 'sh') w.pidReads++
@@ -898,4 +914,67 @@ test('a failed check of the session’s process is not repeated on every refresh
   await texts($)
 
   expect(w.pidReads).toBe(1)
+})
+
+test('worktrees the session and its subagents made before the plugin loaded are read from their transcripts', async ($, on) => {
+  const X = { path: '/other/.claude/worktrees/x', branch: 'x' }
+  const Y = { path: '/repo/.claude/worktrees/y', branch: 'y' }
+  const S1 = { path: '/repo/.claude/worktrees/agent-s1', branch: 'worktree-agent-s1' }
+  const S2 = { path: '/repo/.claude/worktrees/side', branch: 'side' }
+  const w = world(on, { '/repo': [MAIN, Y, S1, S2], '/other': [{ path: '/other', branch: 'main' }, X] }, '/home/u')
+  const AT1 = '2026-11-12T08:38:41.000Z'
+  w.files['/t/s.jsonl'] = [
+    {
+      type: 'assistant',
+      cwd: '/repo',
+      timestamp: AT1,
+      message: {
+        content: [
+          { type: 'tool_use', name: 'Bash', input: { command: 'cd /other && git worktree add .claude/worktrees/x' } },
+        ],
+      },
+    },
+    {
+      type: 'user',
+      cwd: '/repo',
+      timestamp: AT1,
+      toolUseResult: { worktreePath: Y.path, message: 'Created worktree at y' },
+    },
+    {
+      type: 'assistant',
+      cwd: '/repo',
+      timestamp: AT1,
+      message: {
+        content: [{ type: 'tool_use', name: 'Bash', input: { command: 'git worktree add .claude/worktrees/gone' } }],
+      },
+    },
+  ]
+    .map(line => JSON.stringify(line))
+    .join('\n')
+  w.files['/t/s/subagents/agent-s1.jsonl'] = [
+    { type: 'user', cwd: S1.path, timestamp: AT1, agentId: 's1' },
+    {
+      type: 'assistant',
+      cwd: S1.path,
+      timestamp: AT1,
+      message: {
+        content: [{ type: 'tool_use', name: 'Bash', input: { command: 'git worktree add ../side -b side' } }],
+      },
+    },
+  ]
+    .map(line => JSON.stringify(line))
+    .join('\n')
+  w.files['/t/s/subagents/agent-s1.meta.json'] = JSON.stringify({
+    description: 'old helper',
+    requestShape: 'background',
+  })
+  await start($, '/home/u')
+
+  const found = await texts($)
+  const at = clockOf(Date.parse(AT1))
+  expect(found).toContain('THIS SESSION  4 worktrees')
+  expect(found).toContain(`made by this session at ${at} · git worktree add`)
+  expect(found).toContain(`made by this session at ${at} · EnterWorktree`)
+  expect(found).toContain(`made by subagent «old helper» at ${at} · background`)
+  expect(found).toContain(`made by subagent «old helper» at ${at} · git worktree add`)
 })
