@@ -2,6 +2,10 @@
 
 # agent-worktree
 
+```
+/plugin install agent-worktree --marketplace vchaindz/agent-worktree
+```
+
 A Claude Code mod that shows the git worktrees of the current session in a pane
 beside the chat, as cards in the style of [forestui](https://github.com/flipbit03/forestui).
 
