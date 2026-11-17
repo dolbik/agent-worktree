@@ -32,12 +32,12 @@ async function transcriptsIn($: EngineInterface, folder: string, depth = 2): Pro
   return [...files, ...nested.flat()]
 }
 
-// a Bash add counts when the worktree's .git file was written then, not by an earlier add from elsewhere
+// a worktree whose .git file is older than the Bash add was there already, so that add failed
 async function isMadeThen($: EngineInterface, one: Found) {
   if (one.how !== 'bash') return true
   const stat = await $.fs.stat(`${one.path}/.git`).catch(() => undefined)
 
-  return !!stat && one.at !== undefined && stat.mtimeMs >= one.at - 60_000 && stat.mtimeMs <= one.at + 600_000
+  return !!stat && one.at !== undefined && stat.mtimeMs >= one.at - 60_000
 }
 
 async function madeInFile($: EngineInterface, file: string, home: string, isMain: boolean) {
@@ -66,9 +66,8 @@ export async function madeBefore($: EngineInterface): Promise<{ worktrees: Found
   const { transcriptPath } = await $.session.info()
   const home = (await $.env.get('HOME')) ?? ''
   const files = [transcriptPath, ...(await transcriptsIn($, `${transcriptPath.replace(/\.jsonl$/, '')}/subagents`))]
-  const read = await Promise.all(
-    files.map(file => madeInFile($, file, home, file === transcriptPath).catch(() => undefined)),
-  )
+  const read = []
+  for (const file of files) read.push(await madeInFile($, file, home, file === transcriptPath).catch(() => undefined))
   const worktrees = read.flatMap(one => one?.worktrees ?? [])
   const kept = await Promise.all(worktrees.map(async one => ((await isMadeThen($, one)) ? [one] : [])))
 

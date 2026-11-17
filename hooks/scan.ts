@@ -16,8 +16,8 @@ const tracked = atom({ plugin: 'agent-worktree', key: 'tracked' } as const, [], 
 })
 const grove = atom(
   { plugin: 'agent-worktree', key: 'grove' } as const,
-  { repoOf: {}, others: [], rowsAt: 0, snaps: {}, agents: {}, branches: {} },
-  { shape: 'grove-6' },
+  { repoOf: {}, others: [], rowsAt: 0, snaps: {}, agents: {} },
+  { shape: 'grove-7' },
 )
 const pulls = atom({ plugin: 'agent-worktree', key: 'pulls' } as const, { byPath: {}, at: 0 }, { shape: 'pulls-1' })
 const problems = atom({ plugin: 'agent-worktree', key: 'problems' } as const, [], {
@@ -123,9 +123,10 @@ async function rowOf($: EngineInterface, one: Listed & { repo: string }, base?: 
 
 let own: { pid: number; startedAt: string } | null | undefined
 let isHistoryRead = false
-let madeBranches: Made[] = []
+const madeBranches: Made[] = []
 let isLooking = false
-const names = new Map<string, string>()
+
+export const noteBranches = (made: Made[]) => void madeBranches.push(...made)
 
 // Claude Code locks a worktree it makes with `claude session <name> (pid <its pid> start <its start, UTC>)`
 async function ownProcess($: EngineInterface) {
@@ -211,7 +212,7 @@ export function refresh($: EngineInterface, isFull = false) {
 async function refreshNow($: EngineInterface, isFull: boolean) {
   const history = isHistoryRead ? undefined : await madeBefore($).catch(() => undefined)
   isHistoryRead = true
-  if (history) madeBranches = history.branches
+  if (history) madeBranches.push(...history.branches)
   const found = history?.worktrees ?? []
   const now = await $.clock.now()
   const before = await read($, tracked)
@@ -354,9 +355,9 @@ async function refreshNow($: EngineInterface, isFull: boolean) {
   const branches = Object.fromEntries(
     ownPaths.map(path => {
       const made = madeBranches.filter(one => deepest(one.dir, ownPaths) === path).map(one => one.branch)
-      const seen = [...(previous.branches[path] ?? []), ...made, snaps[path]?.branch ?? '']
+      const now = [...new Set([...made, snaps[path]?.branch ?? ''])]
 
-      return [path, [...new Set(seen)].filter(branch => branch && branch !== 'HEAD' && branch !== base(path))]
+      return [path, now.filter(branch => branch && branch !== 'HEAD' && branch !== base(path))]
     }),
   )
   for (const [path, badge] of Object.entries(badges)) {
@@ -386,40 +387,32 @@ async function refreshNow($: EngineInterface, isFull: boolean) {
     rowsAt: isStale ? now : previous.rowsAt,
     snaps,
     agents: Object.fromEntries(Object.entries(badges).filter(([path]) => ownPaths.includes(path))),
-    branches,
   }))
   if (isFull || now - (await read($, pulls)).at >= ROWS_EVERY) void lookUpPulls($, branches, repoOf, now)
 }
 
 const stateOf = (state: string): Pull['state'] => (state === 'OPEN' ? 'open' : state === 'MERGED' ? 'merged' : 'closed')
 
-// PRs whose head is one of the branches, read from GitHub with a gh query; undefined when gh cannot answer
+// PRs this gh account opened from the branches, read from GitHub; undefined when gh cannot answer
 async function pullsOf($: EngineInterface, repo: string, branches: string[]) {
-  const ask = (...args: string[]) => output($, ['gh', ...args], repo, 10_000)
-  if (!names.has(repo)) {
-    const name = await ask('repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner')
-    if (name) names.set(repo, name.trim())
-  }
-  const [owner, name] = (names.get(repo) ?? '').split('/')
-  if (!owner || !name) return undefined
   const fields = branches.map(
     (branch, i) =>
-      `b${i}: pullRequests(headRefName: ${JSON.stringify(branch)}, first: 3, orderBy: {field: CREATED_AT, direction: DESC}) { nodes { number state title } }`,
+      `b${i}: pullRequests(headRefName: ${JSON.stringify(branch)}, first: 3, orderBy: {field: CREATED_AT, direction: DESC}) { nodes { number state title author { login } } }`,
   )
-  const query = `query { repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) { ${fields.join(' ')} } }`
-  const answer = await ask('api', 'graphql', '-f', `query=${query}`)
-  type Nodes = { nodes?: { number: number; state: string; title: string }[] } | null
-  const data = jsonOf<{ data?: { repository?: Record<string, Nodes> } }>(answer ?? '')?.data?.repository
-  if (!data) return undefined
+  const query = `query($owner: String!, $name: String!) { viewer { login } repository(owner: $owner, name: $name) { ${fields.join(' ')} } }`
+  const argv = ['gh', 'api', 'graphql', '-F', 'owner={owner}', '-F', 'name={repo}', '-f', `query=${query}`]
+  type Node = { number: number; state: string; title: string; author?: { login?: string } | null }
+  type Answer = { data?: { viewer?: { login?: string }; repository?: Record<string, { nodes?: Node[] } | null> } }
+  const data = jsonOf<Answer>((await output($, argv, repo, 10_000)) ?? '')?.data
+  const me = data?.viewer?.login
+  if (!data?.repository || !me) return undefined
 
   return Object.fromEntries(
     branches.map((branch, i) => [
       branch,
-      (data[`b${i}`]?.nodes ?? []).map(node => ({
-        number: node.number,
-        state: stateOf(node.state),
-        title: node.title,
-      })),
+      (data.repository?.[`b${i}`]?.nodes ?? [])
+        .filter(node => node.author?.login === me)
+        .map(node => ({ number: node.number, state: stateOf(node.state), title: node.title })),
     ]),
   )
 }
@@ -434,18 +427,19 @@ async function lookUpPulls(
   if (isLooking) return
   isLooking = true
   try {
-    const previous = await read($, pulls)
     const byPath: Record<string, Pull[]> = {}
     const paths = Object.keys(branches).filter(path => (branches[path] ?? []).length > 0)
     for (const repo of new Set(paths.map(path => repoOf[path] ?? ''))) {
       const mine = paths.filter(path => (repoOf[path] ?? '') === repo)
       const found = repo ? await pullsOf($, repo, [...new Set(mine.flatMap(path => branches[path] ?? []))]) : undefined
       for (const path of mine)
-        byPath[path] = found
-          ? (branches[path] ?? []).flatMap(branch => found[branch] ?? []).sort((a, b) => b.number - a.number)
-          : (previous.byPath[path] ?? [])
+        if (found)
+          byPath[path] = (branches[path] ?? [])
+            .flatMap(branch => found[branch] ?? [])
+            .sort((a, b) => b.number - a.number)
     }
-    await update($, pulls, () => ({ byPath, at: now }))
+    // a worktree that is gone, or that gh could not answer for, keeps the PRs last read
+    await update($, pulls, was => ({ byPath: { ...was.byPath, ...byPath }, at: now }))
   } catch {
     // no PR rows this time; the next lookup tries again
   } finally {

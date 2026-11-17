@@ -153,7 +153,8 @@ test('branchesMade finds branches a command creates and where', async () => {
   ])
   expect(branchesMade('git switch main; git checkout -b "$B"; git branch fix/d')).toEqual([])
   expect(isMadeLine('{"name":"Bash","input":{"command":"git switch -c x"}}')).toBe(true)
-  expect(isMadeLine('{"name":"Bash","input":{"command":"git switch x"}}')).toBe(false)
+  expect(isMadeLine('{"name":"Bash","input":{"command":"git checkout -q -b x"}}')).toBe(true)
+  expect(isMadeLine('{"name":"Bash","input":{"command":"git status"}}')).toBe(false)
   expect(
     branchesIn(
       [

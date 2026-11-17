@@ -54,7 +54,7 @@ type World = {
   files: Record<string, string>
   mtimes: Record<string, number>
   unreadable: Set<string>
-  pulls?: Record<string, { number: number; state: string; title: string }[]>
+  pulls?: Record<string, { number: number; state: string; title: string; author?: { login: string } }[]>
   pidReads: number
   gitDirs: string[]
   sent: string[]
@@ -90,15 +90,16 @@ const gitAnswer = (w: World, argv: readonly string[], dir: string) => {
 }
 
 const ghAnswer = (w: World, argv: readonly string[]) => {
-  if (!w.pulls) return undefined
-  if (argv[1] === 'repo') return 'o/r'
+  if (!w.pulls || !argv.includes('owner={owner}')) return undefined
   const query = argv.find(arg => arg.startsWith('query=')) ?? ''
   const fields = [...query.matchAll(/(b\d+): pullRequests\(headRefName: ("[^"]*")/g)]
+  const nodesOf = (branch: string) => (w.pulls?.[branch] ?? []).map(node => ({ author: { login: 'me' }, ...node }))
 
   return JSON.stringify({
     data: {
+      viewer: { login: 'me' },
       repository: Object.fromEntries(
-        fields.map(([, alias, branch]) => [alias, { nodes: w.pulls?.[JSON.parse(branch ?? '""')] ?? [] }]),
+        fields.map(([, alias, branch]) => [alias, { nodes: nodesOf(JSON.parse(branch ?? '""')) }]),
       ),
     },
   })
@@ -1190,4 +1191,50 @@ test('the worktree the session is in, and one found by its lock, come before old
   await $.tool.call({ tool: 'EnterWorktree', name: 'fix-auth' })
   found = await texts($)
   expect(index('fix-auth')).toBeLessThan(index('locked'))
+})
+
+test('a card keeps PRs only of its branches opened by this gh account, and keeps them once removed', async ($, on) => {
+  const W = { path: '/repo/.claude/worktrees/setup', branch: 'fix/now' }
+  const w = world(on, { '/repo': [MAIN, W] })
+  w.files['/t/s.jsonl'] = bashLine('/repo', '2026-10-28T12:30:00.000Z', 'git worktree add .claude/worktrees/setup')
+  w.mtimes[`${W.path}/.git`] = Date.parse('2026-10-28T12:30:00.000Z')
+  w.pulls = {
+    'fix/now': [
+      { number: 180, state: 'OPEN', title: 'Mine' },
+      { number: 99, state: 'OPEN', title: 'From a fork', author: { login: 'someone' } },
+    ],
+    'feature/other': [{ number: 50, state: 'OPEN', title: 'Looked at only' }],
+  }
+  await start($)
+  await texts($)
+  const rows = async () => (await texts($)).filter(text => text.startsWith('PR #') && text.includes(' · '))
+  expect(await rows()).toEqual(['PR #180 open · Mine'])
+
+  W.branch = 'feature/other'
+  await texts($)
+  expect(await rows()).toEqual(['PR #50 open · Looked at only'])
+  W.branch = 'fix/now'
+  await texts($)
+  expect(await rows()).toEqual(['PR #180 open · Mine'])
+
+  w.gone.add(W.path)
+  await texts($)
+  expect(await rows()).toEqual(['PR #180 open · Mine'])
+})
+
+test('a branch made by Bash after the plugin loaded counts for its worktree', async ($, on) => {
+  const W = { path: '/repo/.claude/worktrees/setup', branch: 'fix/new' }
+  const w = world(on, { '/repo': [MAIN, W] })
+  enters(on, W)
+  on('tool.call', { tool: 'Bash' }, () => ({ result: { stdout: '', stderr: '', interrupted: false } as never }))
+  w.pulls = { 'fix/old': [{ number: 7, state: 'MERGED', title: 'Made here earlier' }] }
+  await start($)
+  await $.tool.call({ tool: 'EnterWorktree', name: 'setup' })
+  await $.tool.call({ tool: 'Bash', command: 'git switch -c fix/old' } as never)
+  await texts($)
+
+  const found = await texts($)
+  expect(found.filter(text => text.startsWith('PR #') && text.includes(' · '))).toEqual([
+    'PR #7 merged · Made here earlier',
+  ])
 })

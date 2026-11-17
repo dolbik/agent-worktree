@@ -58,10 +58,10 @@ bar, last commit and sparkline, and shortens its buttons.
   worktree made before the mod loaded is found in the session's transcript and
   its subagents' (read once, when the mod loads), or by its lock, which names
   this session's process; one an agent works in is claimed for the session. Each
-  card says who made it and when, and lists the PRs of the branches made in its
-  worktree (`PR #180 merged · title`, newest first, five at most), read from
-  GitHub with `gh` once a minute; without `gh` or a GitHub remote there are
-  none. The newest worktree comes first; one the session removed stays, marked
+  card says who made it and when, and lists the PRs your `gh` account opened
+  from the branches made in its worktree or checked out there now
+  (`PR #180 merged · title`, newest first, five at most), read from GitHub once
+  a minute; without `gh` or a GitHub remote there are none. The newest worktree comes first; one the session removed stays, marked
   `removed`. A worktree stays here after its agent ends. The worktree the
   session is in is marked `★ here`.
 - **Problems in this session**: one line per failed worktree call (a refused

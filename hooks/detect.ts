@@ -226,7 +226,7 @@ export const timeOf = (text: unknown) => {
   return Number.isFinite(at) ? at : undefined
 }
 
-const MAKES = /worktree add|switch -[cC]|switch --(force-)?create|checkout -[bB]/
+const MAKES = /worktree add|\bswitch\b|\bcheckout\b/
 
 // only lines that can hold an EnterWorktree result, or a Bash command making a worktree or a branch, are parsed
 export const isMadeLine = (text: string) =>

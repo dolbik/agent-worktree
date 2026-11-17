@@ -6,8 +6,8 @@ Claude Code mod (function-hook plugin): a pane listing the git worktrees the cur
 
 - Read-only. The mod runs only read-only commands: git `worktree list`, `--no-optional-locks status`, `rev-list`,
   `diff --shortstat`, `diff --name-status`, `log`, `rev-parse`; `sh -c 'echo $PPID'` and `ps -o lstart= -p <pid>` to
-  match a worktree's lock to this session's process; `gh repo view --json nameWithOwner` and `gh api graphql` with a
-  query, never a mutation, to read the PRs of this session's worktree branches; and `$.agent.list()`. It reads files
+  match a worktree's lock to this session's process; `gh api graphql` with a query, never a mutation, to read the PRs
+  of this session's worktree branches; and `$.agent.list()`. It reads files
   only to find worktrees: the session's own transcript and its subagents' (`$.session.info().transcriptPath`). Never
   add a git mutation, tmux call, or worktree switch/remove. Actions are prompts sent with `$.prompt.submit` or
   `$.ui.view`; Claude does the work.

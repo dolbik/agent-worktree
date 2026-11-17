@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import { firstLine, resolvePath, worktreeAdds } from './detect'
+import { branchesMade, firstLine, resolvePath, worktreeAdds } from './detect'
 import { drawBand, drawPane, openPane } from './pane'
 import {
   PANE,
@@ -12,6 +12,7 @@ import {
   labelOf,
   listAt,
   nameOf,
+  noteBranches,
   refresh,
   remember,
   withoutGuesses,
@@ -184,11 +185,15 @@ export const register: Register = on => {
 
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
     const adds = worktreeAdds(String(e.command ?? ''))
-    if (adds.length === 0) return next(e)
+    const made = branchesMade(String(e.command ?? ''))
+    if (adds.length === 0 && made.length === 0) return next(e)
     const home = (await $.env.get('HOME')) ?? ''
     const agent = await agentOf($, e.agentId)
     const here = e.agentId === undefined ? (await read($, tracked)).find(one => one.isHere)?.path : undefined
     const shell = agent?.cwd ?? here ?? (await $.session.cwd())
+    const now = await $.clock.now()
+    noteBranches(made.map(one => ({ dir: resolvePath(shell, one.dir ?? '.', home), branch: one.branch, at: now })))
+    if (adds.length === 0) return next(e)
     const targets = adds.map(one => {
       const dir = resolvePath(shell, one.dir ?? '.', home)
 

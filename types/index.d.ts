@@ -58,7 +58,6 @@ export type Grove = {
   rowsAt: number
   snaps: Record<string, Snap>
   agents: Record<string, AgentBadge>
-  branches: Record<string, string[]>
 }
 
 export type Pull = { number: number; state: 'open' | 'merged' | 'closed'; title: string }

@@ -7,8 +7,8 @@ import { ACTIVE, PANE, liveTracked, nameOf, refresh } from './scan'
 const tracked = atom({ plugin: 'agent-worktree', key: 'tracked' } as const, [], { shape: 'tracked-2' })
 const grove = atom(
   { plugin: 'agent-worktree', key: 'grove' } as const,
-  { repoOf: {}, others: [], rowsAt: 0, snaps: {}, agents: {}, branches: {} },
-  { shape: 'grove-6' },
+  { repoOf: {}, others: [], rowsAt: 0, snaps: {}, agents: {} },
+  { shape: 'grove-7' },
 )
 const pulls = atom({ plugin: 'agent-worktree', key: 'pulls' } as const, { byPath: {}, at: 0 }, { shape: 'pulls-1' })
 const problems = atom({ plugin: 'agent-worktree', key: 'problems' } as const, [], { shape: 'problems-1' })
