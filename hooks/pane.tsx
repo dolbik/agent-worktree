@@ -172,9 +172,9 @@ export function groupOf(facts: Facts): { group: Group; reasons: Reason[] } {
 }
 
 const GROUPS: { group: Group; label: string; color: string; one: string; many: string }[] = [
+  { group: 'needs-a-look', label: 'Needs a look', color: 'warning', one: 'needs a look', many: 'need a look' },
   { group: 'can-be-removed', label: 'Can be removed', color: 'success', one: 'can be removed', many: 'can be removed' },
   { group: 'pr-open', label: 'PR open', color: 'suggestion', one: 'PR open', many: 'PR open' },
-  { group: 'needs-a-look', label: 'Needs a look', color: 'warning', one: 'needs a look', many: 'need a look' },
   { group: 'in-use', label: 'In use', color: 'subtle', one: 'in use', many: 'in use' },
 ]
 const PR_REASONS: Reason[] = ['pr-merged', 'pr-closed', 'no-pr', 'pr-unknown']

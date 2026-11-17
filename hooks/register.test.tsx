@@ -1362,19 +1362,19 @@ test('other worktrees are grouped as the worktrees mod grouped them, each row wi
   await $.tool.call({ tool: 'EnterWorktree', name: 'fix-auth' })
 
   const found = await texts($, { ...PANE.props, bodyColumns: 80 })
-  expect(found).toContain('1 can be removed · 2 PR open · 3 need a look · 1 in use')
+  expect(found).toContain('3 need a look · 1 can be removed · 2 PR open · 1 in use')
   expect(await otherLines($)).toEqual([
-    '  Can be removed · 1',
-    '  ● merged-clean  feat-a  PR #11 merged     0 d',
-    '  PR open · 2',
-    '  ● colleague     feat-g  PR #15 open       0 d',
-    '  ● open-pr       feat-b  PR #12 open       0 d',
     '  Needs a look · 3',
     '  ● dirty         feat-c  PR #13 merged     0 d',
     '      1 uncommitted file',
     '  ● moved-on      feat-f  no PR             0 d',
     '  ● unpushed      feat-d  no PR             0 d',
     '      2 commits on no remote',
+    '  Can be removed · 1',
+    '  ● merged-clean  feat-a  PR #11 merged     0 d',
+    '  PR open · 2',
+    '  ● colleague     feat-g  PR #15 open       0 d',
+    '  ● open-pr       feat-b  PR #12 open       0 d',
     '  In use · 1',
     '  ● busy          feat-e  no PR             0 d',
     '      a process runs inside',

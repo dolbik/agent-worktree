@@ -40,14 +40,14 @@ PROBLEMS IN THIS SESSION  1 failed worktree call
 ✗ 14:05  subagent «fix auth»  add ../tmp-x  invalid reference: .
 
 OTHER WORKTREES  3 in 1 repository
-1 can be removed · 2 need a look
-  Can be removed · 1
-  ● old-spike    spike/cache         PR #41 merged     98 d
+2 need a look · 1 can be removed
   Needs a look · 2
   ● docs-update  docs/install-steps  no PR              6 d
       1 commit on no remote
   ● fix-login    fix/login-timeout   PR #52 merged      4 d
       3 uncommitted files
+  Can be removed · 1
+  ● old-spike    spike/cache         PR #41 merged     98 d
 ```
 
 Each of this session's worktrees is a framed card: accent border for the one
@@ -74,10 +74,10 @@ bar, last commit and sparkline, and shortens its buttons.
   `EnterWorktree`, a `git worktree add` that failed), the last five.
 - **Other worktrees**: the rest of the worktrees of the same repositories,
   folded by repository when there are several, in the groups the worktrees mod
-  used: **Can be removed** (nothing uncommitted, every commit on a remote, and
-  its PR merged or closed, or no branch), **PR open**, **Needs a look**
-  (uncommitted files, commits on no remote, no PR, or a fact that could not be
-  read) and **In use**. Each row shows the branch, the PR opened from its last
+  used, in this order: **Needs a look** (uncommitted files, commits on no
+  remote, no PR, or a fact that could not be read), **Can be removed** (nothing
+  uncommitted, every commit on a remote, and its PR merged or closed, or no
+  branch), **PR open** and **In use**. Each row shows the branch, the PR opened from its last
   commit (else the newest PR if it is open) and the days since that commit; the
   reasons go on the line below. In use means a lock held by a running session,
   or a process whose current folder is inside the worktree; a running session
