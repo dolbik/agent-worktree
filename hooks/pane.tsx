@@ -544,6 +544,9 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
           ]
         : []),
       ...(open.includes(rowKey(row)) ? [tile(row)] : []),
+      <Text key={`line:${row.path}`} wrap="truncate-end" dimColor>
+        {`  ${'─'.repeat(Math.max(0, width - 2))}`}
+      </Text>,
     ]
   }
   const tally = (rows: Row[]) =>

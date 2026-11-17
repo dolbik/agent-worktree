@@ -665,6 +665,8 @@ test('other worktrees are one line each, folded by repository, within the pane w
     '      4 uncommitted files',
   ])
   for (const line of await lines()) expect(line.length).toBeLessThanOrEqual(55)
+  const rules = (await ui.findAll({ type: 'Text' })).map(one => one.text).filter(one => /^ {2}─+$/.test(one))
+  expect(rules).toEqual(['  ' + '─'.repeat(53), '  ' + '─'.repeat(53)])
   await ui.press({ key: 'repo:/other' })
   expect(await lines()).toContain('  ● spike          spike-cache    PR unknown        0 d')
   await ui.unmount()
@@ -1365,6 +1367,7 @@ test('other worktrees are grouped as the worktrees mod grouped them, each row wi
 
   const found = await texts($, { ...PANE.props, bodyColumns: 80 })
   expect(found).toContain('3 need a look · 1 can be removed · 2 PR open · 1 in use')
+  expect(found.filter(one => /^ {2}─+$/.test(one)).length).toBe(7)
   expect(await otherLines($)).toEqual([
     '  Needs a look · 3',
     '  ● dirty         feat-c  PR #13 merged     0 d',
