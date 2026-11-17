@@ -658,7 +658,7 @@ test('other worktrees are one line each, folded by repository, within the pane w
       .map(one => one.text)
       .filter(one => /^ {2}\S.* · \d+$|^ {4}● |^ {6}\S/.test(one))
   expect((await ui.findAll({ type: 'Text' })).map(one => one.text)).toContain(
-    'OTHER WORKTREES IN THESE REPOSITORIES  3 in 2 repositories',
+    'OTHER WORKTREES IN THE SESSION’S REPOS  3 in 2 repositories',
   )
   expect(await lines()).toEqual([
     '  Needs a look · 2',

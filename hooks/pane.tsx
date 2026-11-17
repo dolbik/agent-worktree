@@ -630,7 +630,7 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
         heading(
           otherRepos.length === 1
             ? `OTHER WORKTREES IN ${nameOf(otherRepos[0] ?? '')}`
-            : 'OTHER WORKTREES IN THESE REPOSITORIES',
+            : 'OTHER WORKTREES IN THE SESSION’S REPOS',
           'claude',
           `${others.length} in ${count(otherRepos.length, 'repository', 'repositories')}`,
         )}
