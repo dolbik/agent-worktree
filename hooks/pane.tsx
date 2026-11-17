@@ -594,18 +594,16 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
         >
           {nameOf(repo)}
         </Button>
-        <Text wrap="truncate-end">
-          {'  '}
-          {tally(rows)}
-        </Text>
+        {!isShown && (
+          <Text wrap="truncate-end">
+            {'  '}
+            {tally(rows)}
+          </Text>
+        )}
       </Box>
-    ) : (
-      <Text key={key} wrap="truncate-end">
-        {tally(rows)}
-      </Text>
-    )
+    ) : undefined
 
-    return [header, ...(isShown ? groupLines(rows) : [])]
+    return [...(header ? [header] : []), ...(isShown ? groupLines(rows) : [])]
   })
 
   return (

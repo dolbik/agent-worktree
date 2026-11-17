@@ -667,9 +667,12 @@ test('other worktrees are one line each, folded by repository, within the pane w
     '      4 uncommitted files',
   ])
   for (const line of await lines()) expect(line.length).toBeLessThanOrEqual(55)
+  const counts = async () => (await ui.findAll({ type: 'Text' })).map(one => one.text).filter(one => / look$/.test(one))
+  expect(await counts()).toEqual(['  1 needs a look', '1 needs a look'])
   const rules = (await ui.findAll({ type: 'Text' })).map(one => one.text).filter(one => /^ {4}─+$/.test(one))
   expect(rules).toEqual(['    ' + '─'.repeat(51)])
   await ui.press({ key: 'repo:/other' })
+  expect(await counts()).toEqual([])
   expect(await lines()).toContain('    ● spike         spike-cache   PR unknown        0 d')
   await ui.unmount()
 })
@@ -1368,7 +1371,7 @@ test('other worktrees are grouped as the worktrees mod grouped them, each row wi
   await $.tool.call({ tool: 'EnterWorktree', name: 'fix-auth' })
 
   const found = await texts($, { ...PANE.props, bodyColumns: 80 })
-  expect(found).toContain('3 need a look · 1 can be removed · 2 PR open · 1 in use')
+  expect(found.some(one => one.includes('need a look ·'))).toBe(false)
   expect(found.filter(one => /^ {4}─+$/.test(one)).length).toBe(3)
   expect(found[found.indexOf('  Can be removed · 1') - 1]).toBe(' ')
   expect(found[found.indexOf('  Needs a look · 3') - 1]).not.toBe(' ')
