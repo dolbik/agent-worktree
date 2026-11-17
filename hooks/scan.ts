@@ -313,7 +313,7 @@ async function refreshNow($: EngineInterface, isFull: boolean) {
   const badges: Record<string, AgentBadge> = {}
   for (const agent of [...agents].sort((a, b) => a.startTime - b.startTime)) {
     const path = deepest(agent.cwd, badgePaths)
-    if (path && ownPaths.includes(path)) badges[path] = badgeOf(agent, agents)
+    if (path && ownPaths.includes(path) && !isInside(sessionDir, path)) badges[path] = badgeOf(agent, agents)
   }
 
   const previous = await read($, grove)

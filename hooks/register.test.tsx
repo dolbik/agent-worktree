@@ -290,7 +290,7 @@ test('a background agent gets its worktree by id, live badge, View, and a done t
   expect(w.toasts).toEqual(['agent "fix auth" done: ↑1 · 2 files'])
   w.agents = [agentRow('ag1', 'fix auth', AGENT_WT.path, 'completed', { tokenCount: 1_234_567 })]
   await ui.press({ key: 'refresh' })
-  expect((await ui.find({ type: 'Text', text: /●/ }))?.text).toContain('1.2M tok')
+  expect((await ui.find({ type: 'Text', text: /●/ }))?.text).toBe('● completed · opus · 1.2M tok ▁▄█')
   await ui.unmount()
 })
 
@@ -693,4 +693,71 @@ test('a finished agent outside any repository costs no git run on each refresh',
   await texts($)
 
   expect(w.gitDirs.filter(dir => dir === '/scratch')).toEqual([])
+})
+
+test('a subagent with no worktree of its own is not drawn on the session’s worktree', async ($, on) => {
+  const w = world(on, { '/repo': [MAIN, WT] })
+  enters(on, WT)
+  await start($)
+  await $.tool.call({ tool: 'EnterWorktree', name: 'fix-auth' })
+  w.agents = [agentRow('ex1', 'look around', WT.path, 'running', { type: 'Explore' })]
+
+  expect((await texts($)).some(one => one.startsWith('● running'))).toBe(false)
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect((await band.find({ type: 'Text', text: /worktree/ }))?.text).toContain('0 running')
+  await band.unmount()
+})
+
+test('a worktree a subagent removed and the session makes again is the session’s, and stays here', async ($, on) => {
+  const w = world(on, { '/repo': [MAIN, WT] })
+  w.agents = [agentRow('ag1', 'try fix', '/repo')]
+  enters(on, WT)
+  on('tool.call', { tool: 'ExitWorktree' }, () => ({
+    result: { action: 'remove', originalCwd: '/repo', worktreePath: WT.path } as never,
+  }))
+  await start($)
+  await $.tool.call({ tool: 'EnterWorktree', name: 'fix-auth', agentId: 'ag1' } as never)
+  await $.tool.call({ tool: 'ExitWorktree', action: 'remove', agentId: 'ag1' } as never)
+  await $.tool.call({ tool: 'EnterWorktree', name: 'fix-auth' })
+  await $.tool.call({ tool: 'EnterWorktree', name: 'fix-auth', agentId: 'ag1' } as never)
+
+  const found = await texts($)
+  expect(found).toContain(`made by this session at ${AT} · EnterWorktree`)
+  expect(found).toContain('⎇ fix-auth  ★ here')
+})
+
+test('git worktree add in the main session runs where the session is', async ($, on) => {
+  const OTHER_WT = { path: '/other/.claude/worktrees/w', branch: 'w' }
+  const w = world(on, { '/repo': [MAIN], '/other': [{ path: '/other', branch: 'main' }, OTHER_WT] })
+  enters(on, OTHER_WT)
+  on('tool.call', { tool: 'Bash' }, () => {
+    w.repos['/other']?.push({ path: '/other/.claude/worktrees/x', branch: 'x' })
+
+    return { result: { stdout: '', stderr: '', interrupted: false } as never }
+  })
+  await start($)
+  await $.tool.call({ tool: 'EnterWorktree', name: 'w' })
+  await $.tool.call({ tool: 'Bash', command: 'git worktree add ../x -b x' })
+
+  expect(await texts($)).toContain('THIS SESSION  2 worktrees')
+})
+
+test('the same file changed in worktrees of two repositories is no overlap', async ($, on) => {
+  const Z = { path: '/other/.claude/worktrees/z', branch: 'z' }
+  const w = world(on, { '/repo': [MAIN, WT], '/other': [{ path: '/other', branch: 'main' }] })
+  w.per[WT.path] = { nameStatus: 'M\tREADME.md' }
+  w.per[Z.path] = { nameStatus: 'M\tREADME.md' }
+  enters(on, WT)
+  on('tool.call', { tool: 'Bash' }, () => {
+    w.repos['/other']?.push(Z)
+
+    return { result: { stdout: '', stderr: '', interrupted: false } as never }
+  })
+  await start($)
+  await $.tool.call({ tool: 'EnterWorktree', name: 'fix-auth' })
+  await $.tool.call({ tool: 'Bash', command: 'git -C /other worktree add .claude/worktrees/z' })
+
+  const found = await texts($)
+  expect(found).toContain('THIS SESSION  2 worktrees')
+  expect(found.some(one => one.startsWith('⚠ overlaps'))).toBe(false)
 })

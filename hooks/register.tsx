@@ -63,24 +63,28 @@ export const register: Register = on => {
     }
     const { worktreePath: path, worktreeBranch: branch } = ran.result
     const wasEmpty = (await read($, tracked)).length === 0
-    await update($, tracked, list => [
-      ...list.filter(one => one.path !== path).map(one => (isMain ? { ...one, isHere: false } : one)),
-      {
-        ...(list.find(one => one.path === path && !isGuess(one)) ?? {
-          how: e.path ? ('entered' as const) : ('enter' as const),
-          agentId: e.agentId,
-          label,
-          at,
-          isRunning: false,
+    await update($, tracked, list => {
+      const kept = list.find(one => one.path === path && !isGuess(one) && !one.isRemoved)
+
+      return [
+        ...list.filter(one => one.path !== path).map(one => (isMain ? { ...one, isHere: false } : one)),
+        {
+          ...(kept ?? {
+            how: e.path ? ('entered' as const) : ('enter' as const),
+            agentId: e.agentId,
+            label,
+            at,
+            isRunning: false,
+            isRemoved: false,
+            toolUseId: e.tool_use_id,
+          }),
+          path,
+          branch,
+          isHere: isMain || (kept?.isHere ?? false),
           isRemoved: false,
-          toolUseId: e.tool_use_id,
-        }),
-        path,
-        branch,
-        isHere: isMain,
-        isRemoved: false,
-      },
-    ])
+        },
+      ]
+    })
     if (isMain) $.ui.status(`⎇ ${branch ?? nameOf(path)}`)
     await openOnFirst($, wasEmpty)
 
@@ -178,7 +182,8 @@ export const register: Register = on => {
     if (adds.length === 0) return next(e)
     const home = (await $.env.get('HOME')) ?? ''
     const agent = await agentOf($, e.agentId)
-    const shell = agent?.cwd ?? (await $.session.cwd())
+    const here = e.agentId === undefined ? (await read($, tracked)).find(one => one.isHere)?.path : undefined
+    const shell = agent?.cwd ?? here ?? (await $.session.cwd())
     const targets = adds.map(one => {
       const dir = resolvePath(shell, one.dir ?? '.', home)
 

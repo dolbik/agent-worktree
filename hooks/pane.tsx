@@ -24,12 +24,12 @@ export function openPane($: EngineInterface) {
 
 const isAgentMade = (one: Tracked) => one.agentId !== undefined || one.how === 'agent'
 
-const overlapsOf = (snaps: Record<string, Snap>, paths: string[]) =>
+const overlapsOf = (snaps: Record<string, Snap>, paths: string[], repoOf: Record<string, string>) =>
   Object.fromEntries(
     paths.map(path => {
       const mine = new Set(snaps[path]?.files.map(file => file.path))
       const hits = paths
-        .filter(other => other !== path)
+        .filter(other => other !== path && repoOf[other] === repoOf[path])
         .map(other => ({
           other,
           files: (snaps[other]?.files ?? []).map(file => file.path).filter(file => mine.has(file)),
@@ -115,6 +115,7 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
   const overlaps = overlapsOf(
     snaps,
     live.map(one => one.path),
+    repoOf,
   )
   const scale = Math.max(
     1,
@@ -227,8 +228,8 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
         {agent && (
           <Text wrap="truncate-end" dimColor={!isActive}>
             <Text color={isActive ? 'success' : undefined}>●</Text> {agent.status}
-            {agent.model ? ` · ${agent.model}` : ''} · {tokensOf(agent.tokenCount)} tok ·{' '}
-            {Math.max(0, Math.round((now - agent.startTime) / 60000))}m
+            {agent.model ? ` · ${agent.model}` : ''} · {tokensOf(agent.tokenCount)} tok
+            {isActive ? ` · ${Math.max(0, Math.round((now - agent.startTime) / 60000))}m` : ''}
             {!isNarrow && spark && <Text color="claude"> {spark}</Text>}
           </Text>
         )}
@@ -381,10 +382,10 @@ export async function drawBand($: EngineInterface, ui: ElementTable) {
   const list = liveTracked(await read($, tracked))
   const failed = await read($, problems)
   if (list.length === 0 && failed.length === 0) return undefined
-  const { snaps, agents } = await read($, grove)
+  const { snaps, agents, repoOf } = await read($, grove)
   const paths = list.map(one => one.path)
   const byAgents = list.filter(isAgentMade).length
-  const overlaps = overlapsOf(snaps, paths)
+  const overlaps = overlapsOf(snaps, paths, repoOf)
   const { Box, Text, Button } = ui
   const tally = (n: number, word: string, color: 'warning' | 'success') => (
     <Text color={n > 0 ? color : undefined} dimColor={n === 0}>
