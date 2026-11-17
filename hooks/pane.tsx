@@ -299,7 +299,7 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
   const room = width - 2 - 4 - tail
   const nameWidth = Math.min(longestName, Math.max(12, Math.ceil(room / 2)))
   const branchWidth = Math.min(longestBranch, room - nameWidth)
-  const hasBranch = branchWidth >= 12
+  const hasBranch = longestBranch > 0 && room - nameWidth >= 12
   const otherRow = (row: Row, i: number) => {
     const dot = row.isGone ? 'error' : row.dirty ? 'warning' : row.ahead === 0 ? 'success' : undefined
 

@@ -122,8 +122,13 @@ export const register: Register = on => {
       toolUseId: e.tool_use_id,
     })
     await openOnFirst($, wasEmpty)
+    // a call that fails keeps a worktree the agent already made; an empty folder goes when it is deleted
     const ran = await next(e).catch(async error => {
-      await update($, tracked, list => list.filter(one => one.toolUseId !== e.tool_use_id))
+      await update($, tracked, list =>
+        list
+          .filter(one => one.toolUseId !== e.tool_use_id || one.path !== '')
+          .map(one => (one.toolUseId === e.tool_use_id ? { ...one, isRunning: false } : one)),
+      )
       throw error
     })
     const result = (ran.result ?? {}) as {
@@ -141,12 +146,12 @@ export const register: Register = on => {
       })
     }
     // a finished agent with no worktreePath left nothing on disk
-    const isGone =
-      ran.deny !== undefined || ran.isError === true || (result.status === 'completed' && !result.worktreePath)
+    const isEmpty = result.status === 'completed' && !result.worktreePath
+    const isFailed = ran.deny !== undefined || ran.isError === true
     await update($, tracked, list =>
       withoutGuesses(
         list
-          .filter(one => one.toolUseId !== e.tool_use_id || !isGone)
+          .filter(one => one.toolUseId !== e.tool_use_id || !(isEmpty || (isFailed && one.path === '')))
           .map(one =>
             one.toolUseId === e.tool_use_id
               ? {

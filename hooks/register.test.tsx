@@ -617,6 +617,7 @@ test('a background agent’s worktree goes once the agent ends and Claude Code d
   w.repos['/repo'] = [MAIN]
   w.gone.add(AGENT_WT.path)
   expect(await texts($)).toContain('No worktrees in this session yet.')
+  expect(w.toasts).toEqual(['agent "fix auth" done: ↑0 · 0 files'])
 })
 
 test('entering a removed worktree again shows it as here, not removed', async ($, on) => {
@@ -760,4 +761,63 @@ test('the same file changed in worktrees of two repositories is no overlap', asy
   const found = await texts($)
   expect(found).toContain('THIS SESSION  2 worktrees')
   expect(found.some(one => one.startsWith('⚠ overlaps'))).toBe(false)
+})
+
+test('other worktrees show short branch names too', async ($, on) => {
+  const X = { path: '/repo/.claude/worktrees/x', branch: 'fix-x' }
+  world(on, { '/repo': [MAIN, WT, X] })
+  enters(on, WT)
+  await start($)
+  await $.tool.call({ tool: 'EnterWorktree', name: 'fix-auth' })
+
+  expect(await texts($)).toContain('● x  fix-x  ↑0 ↓0 · 1 minute ago')
+})
+
+test('a helper an agent starts in its worktree does not take over the agent’s line', async ($, on) => {
+  const w = world(on, { '/repo': [MAIN, AGENT_WT] })
+  on('tool.call', { tool: 'Agent' }, () => ({ result: { status: 'async_launched', agentId: 'ag1' } as never }))
+  w.agents = [
+    agentRow('ag1', 'fix auth', AGENT_WT.path),
+    agentRow('h1', 'run tests', AGENT_WT.path, 'completed', { startTime: 60000, parentId: 'ag1' }),
+  ]
+  await start($)
+  await $.tool.call({ tool: 'Agent', prompt: 'p', description: 'fix auth', isolation: 'worktree' })
+
+  const found = await texts($)
+  expect(found.some(one => one.startsWith('● running'))).toBe(true)
+  expect(found.some(one => one.startsWith('● completed'))).toBe(false)
+})
+
+test('an agent call that fails after the agent made its worktree keeps the worktree', async ($, on) => {
+  const w = world(on, { '/repo': [MAIN] })
+  on('agent.spawn', () => ({ model: 'opus', agentId: 'ag1' }))
+  on('tool.call', { tool: 'Agent' }, async (_, e) => {
+    await $.agent.spawn({ tool_use_id: e.tool_use_id, prompt: 'p', description: 'fix auth' } as never)
+    w.repos['/repo']?.push(AGENT_WT)
+    w.agents = [agentRow('ag1', 'fix auth', AGENT_WT.path)]
+    await $.command.run({ command: 'worktrees' } as never)
+    w.agents = []
+    throw new Error('interrupted')
+  })
+  await start($)
+  await $.tool
+    .call({ tool: 'Agent', prompt: 'p', description: 'fix auth', isolation: 'worktree' })
+    .catch(() => undefined)
+
+  const found = await texts($)
+  expect(found).toContain('THIS SESSION  1 worktree')
+  expect(found.some(one => one.startsWith('◆ agent-1'))).toBe(true)
+})
+
+test('a background agent that ends before a refresh, in a repository not listed yet, keeps its worktree', async ($, on) => {
+  const B = { path: '/b/.claude/worktrees/agent-ag1', branch: 'worktree-agent-ag1' }
+  const w = world(on, { '/repo': [MAIN], '/b': [{ path: '/b', branch: 'main' }, B] })
+  on('tool.call', { tool: 'Agent' }, () => ({ result: { status: 'async_launched', agentId: 'ag1' } as never }))
+  await start($)
+  await $.tool.call({ tool: 'Agent', prompt: 'p', description: 'fix auth', isolation: 'worktree' })
+  w.agents = [agentRow('ag1', 'fix auth', B.path, 'completed')]
+
+  const found = await texts($)
+  expect(found).toContain('THIS SESSION  1 worktree')
+  expect(found.some(one => one.startsWith('◆ agent-ag1'))).toBe(true)
 })

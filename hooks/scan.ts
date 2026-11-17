@@ -207,7 +207,9 @@ async function refreshNow($: EngineInterface, isFull: boolean) {
   const seeds = [
     sessionDir,
     ...liveTracked(before).map(one => one.path),
-    ...agents.filter(one => ACTIVE.includes(one.status)).map(one => one.cwd),
+    ...agents
+      .filter(agent => ACTIVE.includes(agent.status) || before.some(one => one.path === '' && one.agentId === agent.id))
+      .map(agent => agent.cwd),
   ]
   for (const seed of seeds) {
     if ([...lists.values()].some(list => list.some(one => isInside(seed, one.path)))) continue
@@ -309,11 +311,18 @@ async function refreshNow($: EngineInterface, isFull: boolean) {
   const deleted = new Set(live.filter(isDeleted).map(one => one.toolUseId))
   if (deleted.size > 0) await update($, tracked, list => list.filter(one => !deleted.has(one.toolUseId)))
   const ownPaths = live.filter(one => !deleted.has(one.toolUseId)).map(one => one.path)
-  const badgePaths = [...new Set([...paths, ...ownPaths])]
+  const livePaths = live.map(one => one.path)
+  const badgePaths = [...new Set([...paths, ...livePaths])]
   const badges: Record<string, AgentBadge> = {}
   for (const agent of [...agents].sort((a, b) => a.startTime - b.startTime)) {
     const path = deepest(agent.cwd, badgePaths)
-    if (path && ownPaths.includes(path) && !isInside(sessionDir, path)) badges[path] = badgeOf(agent, agents)
+    if (path && livePaths.includes(path) && !isInside(sessionDir, path)) badges[path] = badgeOf(agent, agents)
+  }
+  // the agent that made a worktree keeps its line over a helper it started there
+  for (const one of live) {
+    const owner = agents.find(agent => agent.id === one.agentId)
+    if (owner && isInside(owner.cwd, one.path) && !isInside(sessionDir, one.path))
+      badges[one.path] = badgeOf(owner, agents)
   }
 
   const previous = await read($, grove)
@@ -343,6 +352,6 @@ async function refreshNow($: EngineInterface, isFull: boolean) {
     others: rows,
     rowsAt: isStale ? now : previous.rowsAt,
     snaps,
-    agents: badges,
+    agents: Object.fromEntries(Object.entries(badges).filter(([path]) => ownPaths.includes(path))),
   }))
 }
