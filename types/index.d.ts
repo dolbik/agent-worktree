@@ -1,13 +1,18 @@
 export type Tracked = {
   path: string
   branch?: string
-  source: 'enter' | 'agent'
+  how: 'enter' | 'entered' | 'agent' | 'bash' | 'lock'
+  agentId?: string
   label?: string
+  isBackground?: boolean
+  at?: number
   isRunning: boolean
   isHere: boolean
   isRemoved: boolean
   toolUseId: string
 }
+
+export type Problem = { at: number; who?: string; what: string; cause: string }
 
 export type FileChange = { status: string; path: string; isUncommitted: boolean }
 
@@ -24,6 +29,17 @@ export type Snap = {
   files: FileChange[]
 }
 
+export type Row = {
+  path: string
+  repo: string
+  branch?: string
+  isGone: boolean
+  ahead?: number
+  behind?: number
+  dirty?: number
+  age?: string
+}
+
 export type AgentBadge = {
   id: string
   label: string
@@ -37,10 +53,9 @@ export type AgentBadge = {
 }
 
 export type Grove = {
-  repo?: string
-  base?: string
-  spawned: string[]
-  others: string[]
+  repoOf: Record<string, string>
+  others: Row[]
+  rowsAt: number
   snaps: Record<string, Snap>
   agents: Record<string, AgentBadge>
 }
@@ -50,6 +65,7 @@ declare module 'claude-code' {
     'agent-worktree': {
       tracked: Shaped<Tracked[]>
       grove: Shaped<Grove>
+      problems: Shaped<Problem[]>
       expanded: Shaped<string[]>
     }
   }

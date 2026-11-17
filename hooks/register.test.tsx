@@ -1,8 +1,12 @@
 import { expect, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 
+import { clockOf } from './pane'
+
 type On = Parameters<TestBody>[1]
-type Git = (argv: readonly string[], cwd?: string) => string | undefined
+type Dollar = Parameters<TestBody>[0]
+type Wt = { path: string; branch: string; lock?: string }
+type Answers = { status: string; revList: string; shortstat: string; nameStatus: string; log: string; age: string }
 
 const PANE = {
   plugin: 'agent-worktree',
@@ -13,7 +17,7 @@ const PANE = {
     isFocused: false,
     bodyColumns: 100,
     placement: 'dock',
-    scroll: { offset: 0, bodyRows: 40 },
+    scroll: { offset: 0, bodyRows: 60 },
     view: {},
   },
 } as const
@@ -33,76 +37,88 @@ const BAND = {
   },
 } as const
 
-const WT = '/repo/.claude/worktrees/fix-auth'
-const AGENT_WT = '/repo/.claude/worktrees/agent-1'
+const NOW = 3 * 60000
+const AT = clockOf(NOW)
+const MAIN = { path: '/repo', branch: 'main' }
+const WT = { path: '/repo/.claude/worktrees/fix-auth', branch: 'worktree-fix-auth' }
+const AGENT_WT = { path: '/repo/.claude/worktrees/agent-1', branch: 'worktree-agent-1' }
 
-const worktreeList = (...paths: string[]) =>
-  [
-    'worktree /repo\nHEAD a\nbranch refs/heads/main',
-    ...paths.map(path => `worktree ${path}\nHEAD b\nbranch refs/heads/worktree-${path.split('/').pop()}`),
-  ].join('\n\n')
+type World = {
+  repos: Record<string, Wt[]>
+  cwd: string
+  agents: never[]
+  per: Record<string, Partial<Answers>>
+  pid?: { pid: number; start: string }
+  sent: string[]
+  toasts: string[]
+  views: string[]
+  status: (string | undefined)[]
+}
 
-const repoGit =
-  (paths: string[], per: Record<string, string> = {}): Git =>
-  argv => {
-    const key = argv[1] === 'diff' ? `diff ${argv[2]}` : (argv[1] ?? '')
-    const answers: Record<string, string> = {
-      worktree: worktreeList(...paths),
-      'rev-parse': 'worktree-fix-auth',
-      status: '?? b.txt',
-      'rev-list': '0\t1',
-      'diff --shortstat': ' 1 file changed, 1 insertion(+)',
-      'diff --name-status': 'A\ta.txt',
-      log: 'Add a\u00000 seconds ago',
-      ...per,
-    }
+const gitAnswer = (w: World, argv: readonly string[], dir: string) => {
+  let best: { repo: string; wt: Wt } | undefined
+  for (const [repo, list] of Object.entries(w.repos))
+    for (const wt of list)
+      if ((dir === wt.path || dir.startsWith(`${wt.path}/`)) && (!best || wt.path.length > best.wt.path.length))
+        best = { repo, wt }
+  if (!best) return undefined
+  const args = argv.slice(1).filter(arg => arg !== '--no-optional-locks')
+  const per = w.per[best.wt.path] ?? {}
+  if (args[0] === 'worktree')
+    return (w.repos[best.repo] ?? [])
+      .map(
+        one => `worktree ${one.path}\nHEAD a\nbranch refs/heads/${one.branch}${one.lock ? `\nlocked ${one.lock}` : ''}`,
+      )
+      .join('\n\n')
+  if (args[0] === 'rev-parse') return best.wt.branch
+  if (args[0] === 'status') return per.status ?? ''
+  if (args[0] === 'rev-list') return per.revList ?? '0\t0'
+  if (args[0] === 'diff') return args[1] === '--shortstat' ? (per.shortstat ?? '') : (per.nameStatus ?? '')
+  if (args[0] === 'log')
+    return args.includes('--format=%cr') ? (per.age ?? '1 minute ago') : (per.log ?? 'init\u00001 minute ago')
 
-    return answers[key]
-  }
+  return undefined
+}
 
-const agentRow = (status: string, tokenCount = 45000) =>
-  ({
-    id: 'ag1',
-    description: 'fix auth',
-    label: 'fix auth',
-    status,
-    model: 'opus',
-    tokenCount,
-    tokenSamples: [1000, 20000, 45000],
-    startTime: 0,
-    cwd: AGENT_WT,
-  }) as never
-
-type Engine = { sent: string[]; toasts: string[]; views: string[]; agents: { rows: never[] } }
-
-const engine = (on: On, git: Git | undefined): Engine => {
-  const seen: Engine = { sent: [], toasts: [], views: [], agents: { rows: [] } }
+const world = (on: On, repos: Record<string, Wt[]>, cwd = '/repo'): World => {
+  const w: World = { repos, cwd, agents: [], per: {}, sent: [], toasts: [], views: [], status: [] }
   on('command.register', () => ({ value: { command: 'worktrees' } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
-  on('session.cwd', () => ({ value: '/repo' }))
+  on('session.cwd', () => ({ value: w.cwd }))
+  on('env.get', () => ({ value: '/home/u' }))
   on('clock.every', () => ({ value: undefined }))
-  on('clock.now', () => ({ value: 3 * 60000 }))
-  on('ui.status', () => ({ value: undefined }))
+  on('clock.now', () => ({ value: NOW }))
+  on('ui.status', (_, e) => {
+    w.status.push(e.text)
+
+    return { value: undefined }
+  })
   on('ui.toast', (_, e) => {
-    seen.toasts.push(e.text)
+    w.toasts.push(e.text)
 
     return { value: undefined }
   })
   on('ui.view', (_, e) => {
-    seen.views.push(e.agentId ?? '')
+    w.views.push(e.agentId ?? '')
 
     return { value: {} as never }
   })
-  on('agent.list', () => ({ value: seen.agents.rows }))
+  on('agent.list', () => ({ value: w.agents }))
   on('fs.exists', () => ({ value: true }))
   on('process.run', (_, e) => {
-    const stdout = git?.(e.argv, e.init?.cwd)
+    const [command] = e.argv
+    const out =
+      command === 'sh'
+        ? w.pid && String(w.pid.pid)
+        : command === 'ps'
+          ? w.pid?.start
+          : gitAnswer(w, e.argv, e.init?.cwd ?? w.cwd)
 
     return {
       value: {
-        exitCode: stdout === undefined ? 128 : 0,
-        stdout: stdout ?? '',
+        exitCode: out === undefined ? 128 : 0,
+        stdout: out ?? '',
         stderr: '',
         isStdoutTruncated: false,
         isStderrTruncated: false,
@@ -110,40 +126,81 @@ const engine = (on: On, git: Git | undefined): Engine => {
     }
   })
   on('prompt.submit', (_, e) => {
-    seen.sent.push(e.text)
+    w.sent.push(e.text)
 
     return { text: e.text }
   })
-  on('tool.call', { tool: 'EnterWorktree' }, () => ({
-    result: { worktreePath: WT, worktreeBranch: 'worktree-fix-auth', message: 'ok' },
-  }))
 
-  return seen
+  return w
 }
 
-const start = async ($: Parameters<TestBody>[0]) =>
-  $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+const agentRow = (id: string, description: string, cwd: string, status = 'running', extra: object = {}) =>
+  ({
+    id,
+    description,
+    label: description,
+    type: 'general-purpose',
+    status,
+    model: 'opus',
+    tokenCount: 45000,
+    tokenSamples: [1000, 20000, 45000],
+    startTime: 0,
+    cwd,
+    kind: 'local_agent',
+    taskStatus: status,
+    hasRow: true,
+    ...extra,
+  }) as never
+
+const enters = (on: On, wt: Wt) =>
+  on('tool.call', { tool: 'EnterWorktree' }, () => ({
+    result: { worktreePath: wt.path, worktreeBranch: wt.branch, message: 'ok' },
+  }))
+
+const start = ($: Dollar, cwd = '/repo') => $.session.start({ cwd, surface: 'terminal', isInteractive: true })
+
+const texts = async ($: Dollar, props = PANE.props) => {
+  const ui = await $.ui.mount({ ...PANE, props, surface: 'terminal' })
+  await ui.press({ key: 'refresh' })
+  const found = (await ui.findAll({ type: 'Text' })).map(one => one.text)
+  await ui.unmount()
+
+  return found
+}
 
 test('EnterWorktree is tracked, drawn, and Investigate sends a read-only prompt', async ($, on) => {
-  const seen = engine(on, undefined)
+  const w = world(on, {})
+  enters(on, WT)
   await start($)
   await $.tool.call({ tool: 'EnterWorktree', name: 'fix-auth' })
 
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...PANE, surface })
-    expect((await ui.find({ type: 'Text', text: /fix-auth/ }))?.text).toContain('★ here')
-    await ui.press({ key: `${WT}:Investigate` })
+    expect((await ui.find({ type: 'Text', text: /⎇ fix-auth/ }))?.text).toContain('★ here')
+    expect((await ui.find({ type: 'Text', text: /^made by/ }))?.text).toBe(
+      `made by this session at ${AT} · EnterWorktree`,
+    )
+    await ui.press({ key: `${WT.path}:Investigate` })
     await ui.unmount()
   }
 
-  expect(seen.sent.length).toBe(2)
-  expect(seen.sent[0]).toContain(WT)
-  expect(seen.sent[0]).toContain('Read-only')
-  expect(seen.sent[0]).toContain('its upstream or default branch')
+  expect(w.sent.length).toBe(2)
+  expect(w.sent[0]).toContain(WT.path)
+  expect(w.sent[0]).toContain('Read-only')
+  expect(w.sent[0]).toContain('its upstream or default branch')
+  expect(w.status).toEqual(['⎇ worktree-fix-auth'])
 })
 
 test('git output becomes the card numbers and the file list', async ($, on) => {
-  const seen = engine(on, repoGit([WT]))
+  const w = world(on, { '/repo': [MAIN, WT] })
+  w.per[WT.path] = {
+    status: '?? b.txt',
+    revList: '0\t1',
+    shortstat: ' 1 file changed, 1 insertion(+)',
+    nameStatus: 'A\ta.txt',
+    log: 'Add a\u00000 seconds ago',
+  }
+  enters(on, WT)
   await start($)
   await $.tool.call({ tool: 'EnterWorktree', name: 'fix-auth' })
 
@@ -151,110 +208,116 @@ test('git output becomes the card numbers and the file list', async ($, on) => {
   await ui.press({ key: 'refresh' })
   expect((await ui.find({ type: 'Text', text: /↑/ }))?.text).toBe('worktree-fix-auth  ↑1 ↓0 main · 1 dirty')
   expect((await ui.find({ type: 'Text', text: /█/ }))?.text).toMatch(/^█+ \+1 −0 · 1 files$/)
-  expect((await ui.find({ type: 'Text', text: /^base/ }))?.text).toBe('base main')
   expect(await ui.find({ type: 'Text', text: /a\.txt/ })).toBeUndefined()
-  await ui.press({ key: `${WT}:files` })
+  await ui.press({ key: `${WT.path}:files` })
   expect((await ui.find({ type: 'Text', text: /a\.txt/ }))?.text).toBe('  A  a.txt')
   expect((await ui.find({ type: 'Text', text: /b\.txt/ }))?.text).toBe('  ?? b.txt (uncommitted)')
-  await ui.press({ key: `${WT}:Review diff` })
+  await ui.press({ key: `${WT.path}:Review diff` })
   await ui.unmount()
 
-  expect(seen.sent[0]).toContain('git diff main...worktree-fix-auth')
+  expect(w.sent[0]).toContain('git diff main...worktree-fix-auth')
 })
 
-test('agent and ExitWorktree badges', async ($, on) => {
-  engine(on, undefined)
+test('an agent and ExitWorktree', async ($, on) => {
+  world(on, { '/repo': [MAIN, WT, AGENT_WT] })
+  enters(on, WT)
   on('tool.call', { tool: 'Agent' }, () => ({
-    result: { status: 'completed', worktreePath: AGENT_WT, worktreeBranch: 'worktree-agent-1' } as never,
+    result: {
+      status: 'completed',
+      agentId: 'ag1',
+      worktreePath: AGENT_WT.path,
+      worktreeBranch: AGENT_WT.branch,
+    } as never,
   }))
   on('tool.call', { tool: 'ExitWorktree' }, () => ({
-    result: { action: 'remove', originalCwd: '/repo', worktreePath: WT } as never,
+    result: { action: 'remove', originalCwd: '/repo', worktreePath: WT.path } as never,
   }))
-
   await start($)
   await $.tool.call({ tool: 'EnterWorktree', name: 'fix-auth' })
   await $.tool.call({ tool: 'Agent', prompt: 'fix it', description: 'fix auth', isolation: 'worktree' })
   await $.tool.call({ tool: 'ExitWorktree', action: 'remove' })
 
-  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  const agent = await ui.find({ type: 'Text', text: /◆ agent-1/ })
-  expect(agent?.text).toContain('agent "fix auth"')
-  expect(agent?.text).not.toContain('running')
-  const exited = await ui.find({ type: 'Text', text: /⎇ fix-auth/ })
-  expect(exited?.text).toContain('removed')
-  expect(exited?.text).not.toContain('★ here')
-  await ui.unmount()
+  const found = await texts($)
+  expect(found).toContain(`made by subagent «fix auth» at ${AT}`)
+  expect(found.find(one => one.startsWith('◆ agent-1'))).not.toContain('running')
+  const exited = found.find(one => one.startsWith('⎇ fix-auth'))
+  expect(exited).toContain('removed')
+  expect(exited).not.toContain('★ here')
 })
 
-test('a background agent gets its worktree, live badge, View, and a done toast', async ($, on) => {
-  const seen = engine(on, repoGit([AGENT_WT]))
-  on('tool.call', { tool: 'Agent' }, () => ({ result: { status: 'async_launched' } as never }))
-  seen.agents.rows = [agentRow('running')]
-
+test('a background agent gets its worktree by id, live badge, View, and a done toast', async ($, on) => {
+  const w = world(on, { '/repo': [MAIN, AGENT_WT] })
+  on('tool.call', { tool: 'Agent' }, () => ({ result: { status: 'async_launched', agentId: 'ag1' } as never }))
+  w.agents = [agentRow('ag1', 'fix auth', AGENT_WT.path)]
+  w.per[AGENT_WT.path] = { revList: '0\t1', nameStatus: 'A\ta.txt', status: '?? b.txt' }
   await start($)
   await $.tool.call({ tool: 'Agent', prompt: 'fix it', description: 'fix auth', isolation: 'worktree' })
 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   await ui.press({ key: 'refresh' })
-  expect((await ui.find({ type: 'Text', text: /◆ agent-1/ }))?.text).toContain('agent "fix auth"')
+  expect((await ui.find({ type: 'Text', text: /◆ agent-1/ }))?.text).toBe('◆ agent-1  [general-purpose]')
+  expect((await ui.find({ type: 'Text', text: /^made by/ }))?.text).toBe(
+    `made by subagent «fix auth» at ${AT} · background`,
+  )
   expect((await ui.find({ type: 'Text', text: /●/ }))?.text).toBe('● running · opus · 45k tok · 3m ▁▄█')
-  expect(await ui.find({ type: 'Text', text: /Other Claude worktrees/ })).toBeUndefined()
-  await ui.press({ key: `${AGENT_WT}:view` })
-  expect(seen.views).toEqual(['ag1'])
+  expect(await ui.find({ type: 'Text', text: /OTHER WORKTREES/ })).toBeUndefined()
+  await ui.press({ key: `${AGENT_WT.path}:view` })
+  expect(w.views).toEqual(['ag1'])
 
   await ui.press({ key: 'refresh' })
-  expect(seen.toasts).toEqual([])
-  seen.agents.rows = [agentRow('completed')]
+  expect(w.toasts).toEqual([])
+  w.agents = [agentRow('ag1', 'fix auth', AGENT_WT.path, 'completed')]
   await ui.press({ key: 'refresh' })
-  await ui.press({ key: 'refresh' })
-  expect(seen.toasts).toEqual(['agent "fix auth" done: ↑1 · 2 files'])
-  seen.agents.rows = [agentRow('completed', 1_234_567)]
+  expect(w.toasts).toEqual(['agent "fix auth" done: ↑1 · 2 files'])
+  w.agents = [agentRow('ag1', 'fix auth', AGENT_WT.path, 'completed', { tokenCount: 1_234_567 })]
   await ui.press({ key: 'refresh' })
   expect((await ui.find({ type: 'Text', text: /●/ }))?.text).toContain('1.2M tok')
   await ui.unmount()
 })
 
 test('two worktrees touching one file warn on both cards and in the band', async ($, on) => {
-  engine(on, repoGit([WT, AGENT_WT], { 'diff --name-status': 'M\tsrc/a.ts' }))
+  const w = world(on, { '/repo': [MAIN, WT, AGENT_WT] })
+  for (const one of [WT, AGENT_WT]) w.per[one.path] = { nameStatus: 'M\tsrc/a.ts', status: '?? b.txt', revList: '0\t1' }
+  enters(on, WT)
+  on('tool.call', { tool: 'Agent' }, () => ({
+    result: {
+      status: 'completed',
+      agentId: 'ag1',
+      worktreePath: AGENT_WT.path,
+      worktreeBranch: AGENT_WT.branch,
+    } as never,
+  }))
   await start($)
   await $.tool.call({ tool: 'EnterWorktree', name: 'fix-auth' })
+  await $.tool.call({ tool: 'Agent', prompt: 'fix it', description: 'fix auth', isolation: 'worktree' })
 
-  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  await ui.press({ key: 'refresh' })
-  expect((await ui.find({ type: 'Text', text: /overlaps agent-1/ }))?.text).toContain('src/a.ts')
-  expect((await ui.find({ type: 'Text', text: /overlaps fix-auth/ }))?.text).toContain('src/a.ts')
-  await ui.unmount()
+  const found = await texts($)
+  expect(found.find(one => one.startsWith('⚠ overlaps agent-1'))).toContain('src/a.ts')
+  expect(found.find(one => one.startsWith('⚠ overlaps fix-auth'))).toContain('src/a.ts')
 
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect((await band.find({ type: 'Text', text: /worktrees/ }))?.text).toBe(
-    '⎇ 2 worktrees · 2 dirty · 0 running · 2 overlap',
+    '⎇ 2 worktrees (◆ 1 agent) · 2 dirty · 0 running · 2 overlap',
   )
   await band.unmount()
 })
 
-test('a branch with nothing unmerged and no edits gets the clean badge', async ($, on) => {
-  engine(on, repoGit([WT], { status: '', 'rev-list': '0\t0', 'diff --name-status': '', 'diff --shortstat': '' }))
+test('a branch with nothing unmerged and no edits says so', async ($, on) => {
+  world(on, { '/repo': [MAIN, WT] })
+  enters(on, WT)
   await start($)
   await $.tool.call({ tool: 'EnterWorktree', name: 'fix-auth' })
 
-  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  await ui.press({ key: 'refresh' })
-  expect((await ui.find({ type: 'Text', text: /⎇ fix-auth/ }))?.text).toContain('nothing unmerged · clean')
-  await ui.unmount()
+  expect(await texts($)).toContain('worktree-fix-auth  ↑0 ↓0 main · clean · nothing unmerged')
 })
 
-test('outside a git repo the header says so and the band stays out', async ($, on) => {
-  engine(on, undefined)
-  await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
+test('outside a git repo the pane says there is nothing yet and the band stays out', async ($, on) => {
+  world(on, {}, '/tmp')
+  await start($, '/tmp')
 
-  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  await ui.press({ key: 'refresh' })
-  expect((await ui.find({ type: 'Text', text: /git repo/ }))?.text).toBe('no git repo')
-  expect(await ui.find({ type: 'Text', text: /^base/ })).toBeUndefined()
-  expect((await ui.find({ type: 'Text', text: /No worktrees/ }))?.text).toBe(
-    'No worktrees in this session yet.',
-  )
-  await ui.unmount()
+  const found = await texts($)
+  expect(found).toContain('No worktrees in this session yet.')
+  expect(found.some(one => one.includes('OTHER WORKTREES'))).toBe(false)
 
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect(await band.find({ type: 'Text', text: /worktree/ })).toBeUndefined()
@@ -262,7 +325,9 @@ test('outside a git repo the header says so and the band stays out', async ($, o
 })
 
 test('a narrow pane drops the bar and shortens the buttons', async ($, on) => {
-  engine(on, repoGit([WT]))
+  const w = world(on, { '/repo': [MAIN, WT] })
+  w.per[WT.path] = { status: '?? b.txt', revList: '0\t1', shortstat: ' 1 file changed, 1 insertion(+)' }
+  enters(on, WT)
   await start($)
   await $.tool.call({ tool: 'EnterWorktree', name: 'fix-auth' })
 
@@ -270,60 +335,217 @@ test('a narrow pane drops the bar and shortens the buttons', async ($, on) => {
   await ui.press({ key: 'refresh' })
   expect((await ui.find({ type: 'Text', text: /↑/ }))?.text).toBe('worktree-fix-auth  ↑1 ↓0 main · 1 dirty +1 −0')
   expect(await ui.find({ type: 'Text', text: /█/ })).toBeUndefined()
-  expect((await ui.find({ type: 'Button', key: `${WT}:Investigate` }))?.text).toBe('Inv')
+  expect((await ui.find({ type: 'Button', key: `${WT.path}:Investigate` }))?.text).toBe('Inv')
   await ui.unmount()
 })
 
 test('the diff bar scales each card against the largest diff', async ($, on) => {
-  const base = repoGit([WT, AGENT_WT])
-  engine(on, (argv, cwd) =>
-    argv[1] === 'diff' && argv[2] === '--shortstat'
-      ? cwd === WT
-        ? ' 1 file changed, 1 insertion(+), 1 deletion(-)'
-        : ' 1 file changed, 4 insertions(+)'
-      : base(argv, cwd),
-  )
+  const w = world(on, { '/repo': [MAIN, WT, AGENT_WT] })
+  w.per[WT.path] = { shortstat: ' 1 file changed, 1 insertion(+), 1 deletion(-)' }
+  w.per[AGENT_WT.path] = { shortstat: ' 1 file changed, 4 insertions(+)' }
+  enters(on, WT)
+  on('tool.call', { tool: 'Agent' }, () => ({
+    result: {
+      status: 'completed',
+      agentId: 'ag1',
+      worktreePath: AGENT_WT.path,
+      worktreeBranch: AGENT_WT.branch,
+    } as never,
+  }))
   await start($)
   await $.tool.call({ tool: 'EnterWorktree', name: 'fix-auth' })
+  await $.tool.call({ tool: 'Agent', prompt: 'fix it', description: 'fix auth', isolation: 'worktree' })
 
-  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  await ui.press({ key: 'refresh' })
-  expect((await ui.find({ type: 'Text', text: /\+1 −1/ }))?.text).toBe(
-    `${'█'.repeat(12)}${'░'.repeat(12)} +1 −1 · 1 files`,
-  )
-  expect((await ui.find({ type: 'Text', text: /\+4 −0/ }))?.text).toBe(`${'█'.repeat(24)} +4 −0 · 1 files`)
-  expect((await ui.find({ type: 'Text', text: /^█{6}$/ }))?.text).toBe('█'.repeat(6))
-  await ui.unmount()
+  const found = await texts($)
+  expect(found).toContain(`${'█'.repeat(12)}${'░'.repeat(12)} +1 −1 · 1 files`)
+  expect(found).toContain(`${'█'.repeat(24)} +4 −0 · 1 files`)
 })
 
-test('worktrees of agents and nested subagents no hook saw get their own marked section', async ($, on) => {
-  const NESTED = '/elsewhere/scan-callers'
-  const seen = engine(on, repoGit([AGENT_WT, NESTED]))
-  seen.agents.rows = [
-    { ...(agentRow('running') as object), type: 'general-purpose', description: 'plan auth', label: 'plan auth' },
-    {
-      ...(agentRow('running') as object),
-      id: 'ag2',
-      type: 'Explore',
-      parentId: 'ag1',
-      description: 'scan callers',
-      label: 'scan callers',
-      cwd: NESTED,
-    },
-  ] as never[]
+test('worktrees of agents and nested subagents no hook saw become this session’s', async ($, on) => {
+  const NESTED = { path: '/elsewhere/scan-callers', branch: 'scan-callers' }
+  const w = world(on, { '/repo': [MAIN, AGENT_WT, NESTED] })
+  w.agents = [
+    agentRow('ag1', 'plan auth', AGENT_WT.path),
+    agentRow('ag2', 'scan callers', NESTED.path, 'running', { type: 'Explore', parentId: 'ag1' }),
+  ]
   await start($)
 
-  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  await ui.press({ key: 'refresh' })
-  expect(await ui.find({ type: 'Text', text: /◆ Agent worktrees/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /Other Claude worktrees/ })).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: /No worktrees/ })).toBeUndefined()
-  expect((await ui.find({ type: 'Text', text: /◆ agent-1/ }))?.text).toBe('◆ agent-1 [general-purpose] agent')
-  expect((await ui.find({ type: 'Text', text: /◆ scan-callers/ }))?.text).toBe('◆ scan-callers [Explore] subagent')
-  expect((await ui.find({ type: 'Text', text: /^session/ }))?.text).toBe('session ▸ "plan auth" ▸ ◆ "scan callers"')
-  await ui.unmount()
+  const found = await texts($)
+  expect(found).toContain('◆ agent-1  [general-purpose]')
+  expect(found).toContain('◆ scan-callers  [Explore]')
+  expect(found).toContain(`made by subagent «plan auth» at ${clockOf(0)}`)
+  expect(found).toContain('session ▸ "plan auth" ▸ ◆ "scan callers"')
+  expect(found.some(one => one.includes('OTHER WORKTREES'))).toBe(false)
 
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect((await band.find({ type: 'Text', text: /worktrees/ }))?.text).toMatch(/^⎇ 2 worktrees \(◆ 2 agent\) · /)
   await band.unmount()
+})
+
+test('the session’s own worktree made before the plugin loaded is found by its lock', async ($, on) => {
+  const BUILD = {
+    path: '/repo/.claude/worktrees/build',
+    branch: 'worktree-build',
+    lock: 'claude session build (pid 4242 start Tue Nov 17 07:25:46 2026)',
+  }
+  const OLD = {
+    path: '/repo/.claude/worktrees/old',
+    branch: 'worktree-old',
+    lock: 'claude session old (pid 4242 start Mon Nov 16 09:00:00 2026)',
+  }
+  const OTHER = {
+    path: '/repo/.claude/worktrees/someone',
+    branch: 'worktree-someone',
+    lock: 'claude session someone (pid 77 start Tue Nov 17 07:00:00 2026)',
+  }
+  const w = world(on, { '/repo': [MAIN, BUILD, OLD, OTHER] }, BUILD.path)
+  w.pid = { pid: 4242, start: 'Tue Nov 17  07:25:46 2026' }
+  await start($, BUILD.path)
+
+  const found = await texts($)
+  expect(found).toContain('THIS SESSION  1 worktree')
+  expect(found).toContain('made by this session · EnterWorktree')
+  expect(found).toContain('OTHER WORKTREES  2 in 1 repository')
+  expect(found.some(one => one.startsWith('● old'))).toBe(true)
+  expect(found.some(one => one.startsWith('● someone'))).toBe(true)
+})
+
+test('git worktree add through Bash, by the session or a subagent, in any folder or repository', async ($, on) => {
+  const w = world(on, { '/repo': [MAIN], '/other': [{ path: '/other', branch: 'main' }] })
+  w.agents = [agentRow('ag1', 'build feature', '/repo')]
+  const made: Record<string, [string, Wt]> = {
+    'git worktree add -q ../work/side -b side': ['/repo', { path: '/work/side', branch: 'side' }],
+    'git worktree add /tmp/y -b y': ['/repo', { path: '/tmp/y', branch: 'y' }],
+    'git -C /other worktree add .claude/worktrees/z -b z': [
+      '/other',
+      { path: '/other/.claude/worktrees/z', branch: 'z' },
+    ],
+  }
+  on('tool.call', { tool: 'Bash' }, (_, e) => {
+    const [repo, wt] = made[e.command] ?? []
+    if (repo && wt) w.repos[repo]?.push(wt)
+
+    return { result: { stdout: '', stderr: '', interrupted: false } as never }
+  })
+  await start($)
+  await $.tool.call({ tool: 'Bash', command: 'git worktree add -q ../work/side -b side' })
+  await $.tool.call({ tool: 'Bash', command: 'git worktree add /tmp/y -b y', agentId: 'ag1' } as never)
+  await $.tool.call({ tool: 'Bash', command: 'git -C /other worktree add .claude/worktrees/z -b z' })
+  await $.tool.call({ tool: 'Bash', command: 'git status' })
+
+  const found = await texts($)
+  expect(found).toContain('THIS SESSION  3 worktrees')
+  expect(found.filter(one => one === `made by this session at ${AT} · git worktree add`).length).toBe(2)
+  expect(found).toContain(`made by subagent «build feature» at ${AT} · git worktree add`)
+  expect(found).toContain('other · z  ↑0 ↓0 main · clean · nothing unmerged')
+})
+
+test('failed worktree calls are listed one line each', async ($, on) => {
+  const w = world(on, { '/repo': [MAIN] })
+  w.agents = [agentRow('ag1', 'probe subagent calls', '/repo')]
+  on('tool.call', { tool: 'Bash' }, () => ({
+    isError: true,
+    result: undefined,
+    text: 'Exit code 128\nfatal: invalid reference: .',
+  }))
+  on('tool.call', { tool: 'EnterWorktree' }, () => ({
+    isError: true,
+    result: undefined,
+    text: '<tool_use_error>EnterWorktree cannot create a worktree from a subagent</tool_use_error>',
+  }))
+  await start($)
+  await $.tool.call({ tool: 'Bash', command: 'git worktree add -q ../sub-side -b sub-side .', agentId: 'ag1' } as never)
+  await $.tool.call({ tool: 'EnterWorktree', name: 'sub-enter', agentId: 'ag1' } as never)
+
+  const found = await texts($)
+  expect(found).toContain('PROBLEMS IN THIS SESSION  2 failed worktree calls')
+  expect(found).toContain(`✗ ${AT}  subagent «probe subagent calls»  add ../sub-side  invalid reference: .`)
+  const refused = found.find(one =>
+    one.startsWith(`✗ ${AT}  subagent «probe subagent calls»  enter sub-enter  EnterWorktree cannot`),
+  )
+  expect(refused?.length).toBeLessThanOrEqual(100)
+  expect(refused?.endsWith('…')).toBe(true)
+  expect(w.status).toEqual([])
+
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect((await band.find({ type: 'Text', text: /worktree/ }))?.text).toContain('· 2 failed calls')
+  await band.unmount()
+})
+
+test('two background agents with one description each get their own folder; one that left nothing goes', async ($, on) => {
+  const A = { path: '/repo/.claude/worktrees/agent-a1', branch: 'worktree-agent-a1' }
+  const B = { path: '/repo/.claude/worktrees/agent-b2', branch: 'worktree-agent-b2' }
+  const w = world(on, { '/repo': [MAIN, A, B] })
+  w.agents = [
+    agentRow('a1', 'fix tests', A.path),
+    agentRow('b2', 'fix tests', B.path),
+    agentRow('c3', 'quick look', '/repo/.claude/worktrees/agent-c3', 'completed'),
+  ]
+  const ids = ['a1', 'b2', 'c3']
+  on('tool.call', { tool: 'Agent' }, () => ({ result: { status: 'async_launched', agentId: ids.shift() } as never }))
+  await start($)
+  for (const description of ['fix tests', 'fix tests', 'quick look'])
+    await $.tool.call({ tool: 'Agent', prompt: 'p', description, isolation: 'worktree' })
+
+  const found = await texts($)
+  expect(found).toContain('THIS SESSION  2 worktrees')
+  expect(found.filter(one => one.startsWith('◆ agent-')).sort()).toEqual([
+    '◆ agent-a1  [general-purpose]',
+    '◆ agent-b2  [general-purpose]',
+  ])
+  expect(found.some(one => one.includes('creating'))).toBe(false)
+})
+
+test('an agent’s worktree stays this session’s after the agent ends; the line is drawn on the innermost one', async ($, on) => {
+  const BUILD = { path: '/repo/.claude/worktrees/build', branch: 'worktree-build' }
+  const INNER = { path: '/repo/.claude/worktrees/build/.worktrees/inner', branch: 'inner' }
+  const OUT = { path: '/work/agent-made', branch: 'agent-made' }
+  const w = world(on, { '/repo': [MAIN, BUILD, INNER, OUT] })
+  w.agents = [agentRow('a1', 'inner work', INNER.path), agentRow('b2', 'outside work', OUT.path)]
+  enters(on, BUILD)
+  await start($)
+  await $.tool.call({ tool: 'EnterWorktree', name: 'build' })
+
+  const running = await texts($)
+  expect(running).toContain('THIS SESSION  3 worktrees')
+  expect(running.filter(one => one.startsWith('● running')).length).toBe(2)
+  const buildCard = running.slice(running.indexOf('⎇ build  ★ here'), running.indexOf('◆ inner  [general-purpose]'))
+  expect(buildCard.some(one => one.startsWith('● running'))).toBe(false)
+
+  w.agents = []
+  const ended = await texts($)
+  expect(ended).toContain('THIS SESSION  3 worktrees')
+  expect(ended).toContain(`made by subagent «outside work» at ${clockOf(0)}`)
+  expect(ended.some(one => one.includes('OTHER WORKTREES'))).toBe(false)
+})
+
+test('other worktrees are one line each, folded by repository, within the pane width', async ($, on) => {
+  const O1 = { path: '/repo/.claude/worktrees/review-daemon-flag', branch: 'feat/install-exclude' }
+  const O2 = { path: '/repo/.claude/worktrees/approve-no-full-tests', branch: 'feat/review-tests-rows-and-sync-steps' }
+  const O3 = { path: '/other/.claude/worktrees/feedback', branch: 'feedback-in-chat' }
+  const w = world(on, { '/repo': [MAIN, WT, O1, O2], '/other': [{ path: '/other', branch: 'main' }, O3] })
+  w.per[O1.path] = { status: ' M a\n M b\n M c\n M d', revList: '0\t6', age: '4 days ago' }
+  w.per[O2.path] = { revList: '1\t1', age: '6 days ago' }
+  enters(on, WT)
+  on('tool.call', { tool: 'Bash' }, () => {
+    w.repos['/other']?.push({ path: '/other/.claude/worktrees/mine', branch: 'mine' })
+
+    return { result: { stdout: '', stderr: '', interrupted: false } as never }
+  })
+  await start($)
+  await $.tool.call({ tool: 'EnterWorktree', name: 'fix-auth' })
+  await $.tool.call({ tool: 'Bash', command: 'git -C /other worktree add .claude/worktrees/mine' })
+
+  const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 62 }, surface: 'terminal' })
+  await ui.press({ key: 'refresh' })
+  const rows = async () => (await ui.findAll({ type: 'Text' })).map(one => one.text).filter(one => one.startsWith('● '))
+  expect((await ui.findAll({ type: 'Text' })).map(one => one.text)).toContain('OTHER WORKTREES  3 in 2 repositories')
+  expect(await rows()).toEqual([
+    '● review-daemon…  feat/install-…  ↑6 ↓0 · 4 days ago · 4 dirty',
+    '● approve-no-fu…  feat/review-t…  ↑1 ↓1 · 6 days ago',
+  ])
+  for (const row of await rows()) expect(row.length).toBeLessThanOrEqual(62)
+  await ui.press({ key: 'repo:/other' })
+  expect(await rows()).toContain('● feedback        feedback-in-c…  ↑0 ↓0 · 1 minute ago')
+  await ui.unmount()
 })

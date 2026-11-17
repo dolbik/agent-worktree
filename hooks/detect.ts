@@ -26,7 +26,8 @@ export const deepest = (dir: string, paths: string[]) =>
   paths.filter(path => isInside(dir, path)).sort((a, b) => b.length - a.length)[0]
 
 export const resolvePath = (folder: string, path: string, home: string) => {
-  const full = path === '~' || path.startsWith('~/') ? home + path.slice(1) : path.startsWith('/') ? path : `${folder}/${path}`
+  const full =
+    path === '~' || path.startsWith('~/') ? home + path.slice(1) : path.startsWith('/') ? path : `${folder}/${path}`
   const parts: string[] = []
   for (const part of full.split('/')) {
     if (part === '..') parts.pop()
