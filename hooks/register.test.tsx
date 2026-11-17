@@ -520,9 +520,9 @@ test('an agent’s worktree stays this session’s after the agent ends; the lin
 })
 
 test('other worktrees are one line each, folded by repository, within the pane width', async ($, on) => {
-  const O1 = { path: '/repo/.claude/worktrees/review-daemon-flag', branch: 'feat/install-exclude' }
-  const O2 = { path: '/repo/.claude/worktrees/approve-no-full-tests', branch: 'feat/review-tests-rows-and-sync-steps' }
-  const O3 = { path: '/other/.claude/worktrees/feedback', branch: 'feedback-in-chat' }
+  const O1 = { path: '/repo/.claude/worktrees/fix-login', branch: 'fix/login-timeout-handling' }
+  const O2 = { path: '/repo/.claude/worktrees/docs-install-steps', branch: 'docs/install-steps-for-windows' }
+  const O3 = { path: '/other/.claude/worktrees/spike', branch: 'spike-cache' }
   const w = world(on, { '/repo': [MAIN, WT, O1, O2], '/other': [{ path: '/other', branch: 'main' }, O3] })
   w.per[O1.path] = { status: ' M a\n M b\n M c\n M d', revList: '0\t6', age: '4 days ago' }
   w.per[O2.path] = { revList: '1\t1', age: '6 days ago' }
@@ -541,11 +541,11 @@ test('other worktrees are one line each, folded by repository, within the pane w
   const rows = async () => (await ui.findAll({ type: 'Text' })).map(one => one.text).filter(one => one.startsWith('● '))
   expect((await ui.findAll({ type: 'Text' })).map(one => one.text)).toContain('OTHER WORKTREES  3 in 2 repositories')
   expect(await rows()).toEqual([
-    '● review-daemon…  feat/install-…  ↑6 ↓0 · 4 days ago · 4 dirty',
-    '● approve-no-fu…  feat/review-t…  ↑1 ↓1 · 6 days ago',
+    '● fix-login       fix/login-tim…  ↑6 ↓0 · 4 days ago · 4 dirty',
+    '● docs-install-…  docs/install-…  ↑1 ↓1 · 6 days ago',
   ])
   for (const row of await rows()) expect(row.length).toBeLessThanOrEqual(62)
   await ui.press({ key: 'repo:/other' })
-  expect(await rows()).toContain('● feedback        feedback-in-c…  ↑0 ↓0 · 1 minute ago')
+  expect(await rows()).toContain('● spike           spike-cache     ↑0 ↓0 · 1 minute ago')
   await ui.unmount()
 })

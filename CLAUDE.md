@@ -1,23 +1,32 @@
 # agent-worktree
 
-Claude Code mod (function-hook plugin): a pane listing the current session's git worktrees.
+Claude Code mod (function-hook plugin): a pane listing the git worktrees the current session and its subagents made.
 
 ## Rules
 
-- Read-only. The mod runs only read-only git commands (`worktree list`, `status`, `rev-list`,
-  `diff --shortstat`, `diff --name-status`, `log`, `rev-parse`) and `$.agent.list()`. Never add a git mutation, tmux call, or worktree
-  switch/remove. Actions are prompts sent with `$.prompt.submit` or `$.ui.view`; Claude does the work.
-- Every prompt ends with the `READ_ONLY` sentence in `hooks/register.tsx`.
-- State the pane draws lives in `$.state` atoms (`tracked`, `grove`, `expanded`), declared in
-  `types/index.d.ts`. Change a stored value's fields, bump its `shape` tag.
+- Read-only. The mod runs only read-only commands: git `worktree list`, `--no-optional-locks status`, `rev-list`,
+  `diff --shortstat`, `diff --name-status`, `log`, `rev-parse`; `sh -c 'echo $PPID'` and `ps -o lstart= -p <pid>` to
+  match a worktree's lock to this session's process; and `$.agent.list()`. Never add a git mutation, tmux call, or
+  worktree switch/remove. Actions are prompts sent with `$.prompt.submit` or `$.ui.view`; Claude does the work.
+- Every prompt ends with the `READ_ONLY` sentence in `hooks/pane.tsx`.
+- State lives in `$.state` atoms (`tracked`, `grove`, `problems`, `expanded`), declared in `types/index.d.ts`. Each
+  file that reads an atom declares it itself (the engine requires it); change a stored value's fields, bump its
+  `shape` tag in every file.
+- A function that takes `$` from another file is a `function` declaration, not an arrow (the engine requires it).
 - No DOM, no Node: reach the host through `$` (`$.process.run`, `$.fs`, `$.clock`).
 
 ## Layout
 
-- `hooks/register.tsx`: `tool.call` hooks on `EnterWorktree`, `ExitWorktree`, `Agent`
-  (`isolation: "worktree"`) track worktrees; `refresh` (every 5 s from `session.start`) reads git and `$.agent.list()`, fills background agents, claims any worktree an agent or nested subagent works in (`spawned`), toasts finished ones; `ui.render` on `Pane` draws cards, on `AbovePrompt` the summary band;
+- `hooks/register.tsx`: `tool.call` hooks record worktrees when they are made, in the main loop or a subagent's
+  (`e.agentId`): `EnterWorktree`, `Agent` (`isolation: "worktree"`, a background agent's folder found by its
+  `agentId`), and Bash `git worktree add` (worktree list before and after the call); failed calls go to `problems`;
   `/worktrees` opens the pane.
-- `hooks/register.test.tsx`: tests; each hook in a test stands for the engine.
+- `hooks/scan.ts`: `refresh` (every 5 s from `session.start`) lists the worktrees of every repository the session
+  touches, matches locks to this session's process, claims worktrees its agents work in (innermost folder wins),
+  snapshots this session's worktrees, reads other worktrees once a minute, toasts finished agents.
+- `hooks/pane.tsx`: the pane (THIS SESSION cards, PROBLEMS IN THIS SESSION, OTHER WORKTREES rows) and the band.
+- `hooks/detect.ts`: pure parsing: `git worktree add` in a Bash command, `worktree list --porcelain`, lock text.
+- `hooks/*.test.ts(x)`: tests; each hook in a test stands for the engine.
 - `.claude-plugin/types/`: written by Claude Code on load, not edited, not committed.
 
 ## Checks
