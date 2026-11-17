@@ -986,3 +986,26 @@ test('a made-by time names the day when it is not today', async () => {
   expect(clockOf(new Date(2026, 10, 12, 13, 1).getTime(), now)).toBe('12 Nov 13:01')
   expect(clockOf(new Date(2025, 11, 31, 23, 59).getTime(), now)).toBe('31 Dec 2025 23:59')
 })
+
+test('this session lists its newest worktree first', async ($, on) => {
+  const OLD = { path: '/repo/.claude/worktrees/old', branch: 'old' }
+  const NEW = { path: '/repo/.claude/worktrees/new', branch: 'new' }
+  const w = world(on, { '/repo': [MAIN, OLD, NEW] })
+  const made = (path: string, timestamp: string) =>
+    JSON.stringify({
+      type: 'user',
+      cwd: '/repo',
+      timestamp,
+      toolUseResult: { worktreePath: path, message: 'Created worktree' },
+    })
+  w.files['/t/s.jsonl'] = [made(OLD.path, '2026-06-30T19:28:55.000Z'), made(NEW.path, '2026-10-28T12:30:00.000Z')].join(
+    '\n',
+  )
+  await start($)
+
+  const found = await texts($)
+  const newer = found.findIndex(text => text.includes(`at ${clockOf(Date.parse('2026-10-28T12:30:00.000Z'), NOW)}`))
+  const older = found.findIndex(text => text.includes(`at ${clockOf(Date.parse('2026-06-30T19:28:55.000Z'), NOW)}`))
+  expect(newer).toBeGreaterThan(-1)
+  expect(older).toBeGreaterThan(newer)
+})

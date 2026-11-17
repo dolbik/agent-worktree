@@ -375,7 +375,7 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
         </Button>
       </Box>
       {list.length === 0 && <Text dimColor>No worktrees in this session yet.</Text>}
-      {list.map(card)}
+      {[...list].sort((a, b) => (b.at ?? 0) - (a.at ?? 0)).map(card)}
       {failed.length > 0 && <Text> </Text>}
       {failed.length > 0 &&
         heading(
