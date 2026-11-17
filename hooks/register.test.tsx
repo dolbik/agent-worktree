@@ -1464,3 +1464,48 @@ test('a lock of a running session puts a row in use; a lock left by a stopped se
   w.processes = null
   expect(await otherLines($)).toContain('  In use · 3')
 })
+
+test('pressing an other worktree’s row opens a tile with a card’s details; pressing it again closes it', async ($, on) => {
+  const O = { path: '/repo/.claude/worktrees/review', branch: 'feat-review' }
+  const w = world(on, { '/repo': [MAIN, WT, O] })
+  w.per[O.path] = {
+    status: '?? notes.md',
+    revList: '0\t2',
+    shortstat: ' 1 file changed, 3 insertions(+), 1 deletion(-)',
+    nameStatus: 'M\tsrc/a.ts',
+    log: 'Fix the parser\u00002 days ago',
+  }
+  w.pulls = {
+    'feat-review': [
+      { number: 7, state: 'OPEN', title: 'Fix the parser', headRefOid: 'a', author: { login: 'someone-else' } },
+    ],
+  }
+  enters(on, WT)
+  await start($)
+  await $.tool.call({ tool: 'EnterWorktree', name: 'fix-auth' })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.press({ key: 'refresh' })
+  const shown = async () => (await ui.findAll({ type: 'Text' })).map(one => one.text)
+  const numbers = 'feat-review  ↑2 ↓0 main · 1 dirty'
+  expect(await shown()).not.toContain(numbers)
+  expect(await ui.find({ key: `${O.path}:Investigate` })).toBeUndefined()
+
+  await ui.press({ key: `other:${O.path}` })
+  const tile = await shown()
+  expect(tile).toContain(numbers)
+  expect(tile.some(one => /^█+ \+3 −1 · 1 files$/.test(one))).toBe(true)
+  expect(tile).toContain('Fix the parser · 2 days ago')
+  expect(tile).toContain('PR #7 open · Fix the parser')
+  await ui.press({ key: `${O.path}:files` })
+  expect(await shown()).toContain('  M  src/a.ts')
+  expect(await shown()).toContain('  ?? notes.md (uncommitted)')
+  await ui.press({ key: `${O.path}:Cleanup check` })
+  expect(w.sent[0]).toContain(`worktree at ${O.path} (branch feat-review) is safe to remove: is it merged into main`)
+  expect(w.sent[0]).toContain('Read-only: do not modify, switch into, merge or remove the worktree.')
+
+  await ui.press({ key: `other:${O.path}` })
+  expect(await shown()).not.toContain(numbers)
+  expect(await ui.find({ key: `${O.path}:Investigate` })).toBeUndefined()
+  await ui.unmount()
+})

@@ -224,14 +224,19 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
     live.map(one => one.path),
     repoOf,
   )
+  const rowKey = (row: Row) => `other:${row.path}`
+  const opened = others.filter(row => open.includes(rowKey(row)))
   const scale = Math.max(
     1,
-    ...live.map(one => diffOf(snaps[one.path])).map(diff => (diff?.add ?? 0) + (diff?.del ?? 0)),
+    ...[...live, ...opened].map(one => diffOf(snaps[one.path])).map(diff => (diff?.add ?? 0) + (diff?.del ?? 0)),
   )
   const repos = [...new Set([...live.map(one => repoOf[one.path]), ...others.map(row => row.repo)].filter(Boolean))]
   const ask = (text: string) => () => void $.prompt.submit({ text })
-  const toggle = (key: string) => () =>
-    void update($, expanded, keys => (keys.includes(key) ? keys.filter(one => one !== key) : [...keys, key]))
+  const flip = (key: string) =>
+    update($, expanded, keys => (keys.includes(key) ? keys.filter(one => one !== key) : [...keys, key]))
+  const toggle = (key: string) => () => void flip(key)
+  // an opened row reads its worktree like a card does, so the refresh starts at once
+  const openRow = (row: Row) => () => void flip(rowKey(row)).then(() => refresh($))
   const short: Record<string, string> = { Investigate: 'Inv', 'Review diff': 'Diff', 'Cleanup check': 'Clean' }
   const fileColor = (status: string) =>
     status === 'A' ? 'success' : status === 'D' ? 'error' : status === '??' ? undefined : 'warning'
@@ -244,6 +249,129 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
     </Text>
   )
 
+  type Parts = { branch: string; filesKey: string; pullsKey: string; pullList: Pull[]; isDim: boolean; canAct: boolean }
+  // what a card shows below its heading, for this session's cards and for an other worktree opened from its row
+  const details = (path: string, snap: Snap | undefined, parts: Parts) => {
+    const { branch, filesKey, pullsKey, pullList, isDim, canAct } = parts
+    const agent = agents[path]
+    const isActive = !!agent && ACTIVE.includes(agent.status)
+    const files = snap?.files ?? []
+    const diff = diffOf(snap)
+    const bar = diff && barOf(diff.add, diff.del, scale, BAR_WIDTH)
+    const spark = agent ? sparkOf(agent.samples) : ''
+    const isMerged = !!snap && !snap.isGone && !!snap.base && snap.ahead === 0 && snap.dirty === 0
+    const repo = repos.length > 1 && repoOf[path] ? `${nameOf(repoOf[path])} · ` : ''
+    const isOpen = open.includes(filesKey)
+    const isPullsOpen = open.includes(pullsKey)
+
+    return [
+      snap?.isGone && <Text color="error">gone from disk</Text>,
+      snap && !snap.isGone && (
+        <Text wrap="truncate-end">
+          <Text dimColor>
+            {repo}
+            {branch}
+          </Text>
+          {snap.base && (
+            <Text>
+              {'  '}
+              <Text color={snap.ahead ? 'success' : undefined} dimColor={!snap.ahead}>
+                ↑{snap.ahead}
+              </Text>{' '}
+              <Text color={snap.behind ? 'warning' : undefined} dimColor={!snap.behind}>
+                ↓{snap.behind}
+              </Text>
+              <Text dimColor> {snap.base}</Text>
+            </Text>
+          )}
+          <Text dimColor> · </Text>
+          {snap.dirty ? <Text color="warning">{snap.dirty} dirty</Text> : <Text color="success">clean</Text>}
+          {isMerged && <Text dimColor> · nothing unmerged</Text>}
+          {isNarrow && diff && (
+            <Text>
+              {' '}
+              <Text color="success">+{diff.add}</Text> <Text color="error">−{diff.del}</Text>
+            </Text>
+          )}
+        </Text>
+      ),
+      !isNarrow && diff && bar && (
+        <Text wrap="truncate-end">
+          <Text color="success">{bar.green}</Text>
+          <Text color="error">{bar.red}</Text>
+          <Text dimColor>{bar.rest}</Text> <Text color="success">+{diff.add}</Text>{' '}
+          <Text color="error">−{diff.del}</Text>
+          <Text dimColor> · {diff.files} files</Text>
+        </Text>
+      ),
+      !isNarrow && snap?.lastSubject && (
+        <Text wrap="truncate-end" dimColor>
+          {snap.lastSubject} · {snap.lastAge}
+        </Text>
+      ),
+      ...(isPullsOpen ? pullList : pullList.slice(0, PULLS_SHOWN)).map(pull => (
+        <Text wrap="truncate-end" dimColor={isDim}>
+          <Text color={pullColor(pull.state)}>{`PR #${pull.number} ${pull.state}`}</Text>
+          <Text dimColor>{` · ${pull.title}`}</Text>
+        </Text>
+      )),
+      pullList.length > PULLS_SHOWN && (
+        <Box>
+          <Button key={`${path}:pulls`} onPress={toggle(pullsKey)}>
+            {isPullsOpen ? 'Fewer PRs' : `+${pullList.length - PULLS_SHOWN} more PRs`}
+          </Button>
+        </Box>
+      ),
+      pullList.length === 0 && unknown.includes(path) && <Text dimColor>PR unknown</Text>,
+      agent && (
+        <Text wrap="truncate-end" dimColor={!isActive}>
+          <Text color={isActive ? 'success' : undefined}>●</Text> {agent.status}
+          {agent.model ? ` · ${agent.model}` : ''} · {tokensOf(agent.tokenCount)} tok
+          {isActive ? ` · ${Math.max(0, Math.round((now - agent.startTime) / 60000))}m` : ''}
+          {!isNarrow && spark && <Text color="claude"> {spark}</Text>}
+        </Text>
+      ),
+      ...(overlaps[path] ?? []).map(hit => (
+        <Text wrap="truncate-end" color="warning">
+          ⚠ overlaps {nameOf(hit.other)}: {hit.files.slice(0, 2).join(', ')}
+          {hit.files.length > 2 ? ` (+${hit.files.length - 2})` : ''}
+        </Text>
+      )),
+      ...(isOpen
+        ? files.slice(0, 20).map(file => (
+            <Text wrap="truncate-end">
+              {'  '}
+              <Text color={fileColor(file.status)} dimColor={file.status === '??'}>
+                {file.status.padEnd(2)}
+              </Text>{' '}
+              {file.path}
+              {file.isUncommitted ? <Text dimColor> (uncommitted)</Text> : ''}
+            </Text>
+          ))
+        : []),
+      isOpen && files.length > 20 && <Text dimColor> +{files.length - 20} more</Text>,
+      canAct && !snap?.isGone && (
+        <Box flexDirection="row" gap={1}>
+          {Object.entries(prompts(path, branch, snap?.base)).map(([label, text]) => (
+            <Button key={`${path}:${label}`} onPress={ask(text)}>
+              {isNarrow ? (short[label] ?? label) : label}
+            </Button>
+          ))}
+          {files.length > 0 && (
+            <Button key={`${path}:files`} onPress={toggle(filesKey)}>
+              {isOpen ? 'Hide files' : `Files (${files.length})`}
+            </Button>
+          )}
+          {agent && (
+            <Button key={`${path}:view`} onPress={() => void $.ui.view({ agentId: agent.id })}>
+              {isNarrow ? 'View' : 'View agent'}
+            </Button>
+          )}
+        </Box>
+      ),
+    ]
+  }
+
   const card = (one: Tracked) => {
     const path = one.path
     const snap = snaps[path]
@@ -252,16 +380,6 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
     const isDim = one.isRemoved
     const isAgent = isAgentMade(one)
     const lineage = agent?.lineage ?? []
-    const branch = snap?.branch ?? one.branch ?? nameOf(path)
-    const files = snap?.files ?? []
-    const diff = diffOf(snap)
-    const bar = diff && barOf(diff.add, diff.del, scale, BAR_WIDTH)
-    const spark = agent ? sparkOf(agent.samples) : ''
-    const isMerged = !!snap && !snap.isGone && !!snap.base && snap.ahead === 0 && snap.dirty === 0
-    const repo = repos.length > 1 && repoOf[path] ? `${nameOf(repoOf[path])} · ` : ''
-    const isOpen = open.includes(one.toolUseId)
-    const cardPulls = (byPath[path] ?? []).filter(pull => pull.isMine)
-    const isPullsOpen = open.includes(`${one.toolUseId}:pulls`)
 
     return (
       <Box
@@ -290,109 +408,39 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
           </Text>
         )}
         {!snap && path !== '' && !one.isRemoved && <Text dimColor>scanning…</Text>}
-        {snap?.isGone && <Text color="error">gone from disk</Text>}
-        {snap && !snap.isGone && (
-          <Text wrap="truncate-end">
-            <Text dimColor>
-              {repo}
-              {branch}
-            </Text>
-            {snap.base && (
-              <Text>
-                {'  '}
-                <Text color={snap.ahead ? 'success' : undefined} dimColor={!snap.ahead}>
-                  ↑{snap.ahead}
-                </Text>{' '}
-                <Text color={snap.behind ? 'warning' : undefined} dimColor={!snap.behind}>
-                  ↓{snap.behind}
-                </Text>
-                <Text dimColor> {snap.base}</Text>
-              </Text>
-            )}
-            <Text dimColor> · </Text>
-            {snap.dirty ? <Text color="warning">{snap.dirty} dirty</Text> : <Text color="success">clean</Text>}
-            {isMerged && <Text dimColor> · nothing unmerged</Text>}
-            {isNarrow && diff && (
-              <Text>
-                {' '}
-                <Text color="success">+{diff.add}</Text> <Text color="error">−{diff.del}</Text>
-              </Text>
-            )}
-          </Text>
-        )}
-        {!isNarrow && diff && bar && (
-          <Text wrap="truncate-end">
-            <Text color="success">{bar.green}</Text>
-            <Text color="error">{bar.red}</Text>
-            <Text dimColor>{bar.rest}</Text> <Text color="success">+{diff.add}</Text>{' '}
-            <Text color="error">−{diff.del}</Text>
-            <Text dimColor> · {diff.files} files</Text>
-          </Text>
-        )}
-        {!isNarrow && snap?.lastSubject && (
-          <Text wrap="truncate-end" dimColor>
-            {snap.lastSubject} · {snap.lastAge}
-          </Text>
-        )}
-        {(isPullsOpen ? cardPulls : cardPulls.slice(0, PULLS_SHOWN)).map(pull => (
-          <Text wrap="truncate-end" dimColor={isDim}>
-            <Text color={pullColor(pull.state)}>{`PR #${pull.number} ${pull.state}`}</Text>
-            <Text dimColor>{` · ${pull.title}`}</Text>
-          </Text>
-        ))}
-        {cardPulls.length > PULLS_SHOWN && (
-          <Box>
-            <Button key={`${path}:pulls`} onPress={toggle(`${one.toolUseId}:pulls`)}>
-              {isPullsOpen ? 'Fewer PRs' : `+${cardPulls.length - PULLS_SHOWN} more PRs`}
-            </Button>
-          </Box>
-        )}
-        {cardPulls.length === 0 && unknown.includes(path) && <Text dimColor>PR unknown</Text>}
-        {agent && (
-          <Text wrap="truncate-end" dimColor={!isActive}>
-            <Text color={isActive ? 'success' : undefined}>●</Text> {agent.status}
-            {agent.model ? ` · ${agent.model}` : ''} · {tokensOf(agent.tokenCount)} tok
-            {isActive ? ` · ${Math.max(0, Math.round((now - agent.startTime) / 60000))}m` : ''}
-            {!isNarrow && spark && <Text color="claude"> {spark}</Text>}
-          </Text>
-        )}
-        {(overlaps[path] ?? []).map(hit => (
-          <Text wrap="truncate-end" color="warning">
-            ⚠ overlaps {nameOf(hit.other)}: {hit.files.slice(0, 2).join(', ')}
-            {hit.files.length > 2 ? ` (+${hit.files.length - 2})` : ''}
-          </Text>
-        ))}
-        {isOpen &&
-          files.slice(0, 20).map(file => (
-            <Text wrap="truncate-end">
-              {'  '}
-              <Text color={fileColor(file.status)} dimColor={file.status === '??'}>
-                {file.status.padEnd(2)}
-              </Text>{' '}
-              {file.path}
-              {file.isUncommitted ? <Text dimColor> (uncommitted)</Text> : ''}
-            </Text>
-          ))}
-        {isOpen && files.length > 20 && <Text dimColor> +{files.length - 20} more</Text>}
-        {path && !snap?.isGone && !one.isRemoved && (
-          <Box flexDirection="row" gap={1}>
-            {Object.entries(prompts(path, branch, snap?.base)).map(([label, text]) => (
-              <Button key={`${path}:${label}`} onPress={ask(text)}>
-                {isNarrow ? (short[label] ?? label) : label}
-              </Button>
-            ))}
-            {files.length > 0 && (
-              <Button key={`${path}:files`} onPress={toggle(one.toolUseId)}>
-                {isOpen ? 'Hide files' : `Files (${files.length})`}
-              </Button>
-            )}
-            {agent && (
-              <Button key={`${path}:view`} onPress={() => void $.ui.view({ agentId: agent.id })}>
-                {isNarrow ? 'View' : 'View agent'}
-              </Button>
-            )}
-          </Box>
-        )}
+        {details(path, snap, {
+          branch: snap?.branch ?? one.branch ?? nameOf(path),
+          filesKey: one.toolUseId,
+          pullsKey: `${one.toolUseId}:pulls`,
+          pullList: (byPath[path] ?? []).filter(pull => pull.isMine),
+          isDim,
+          canAct: path !== '' && !one.isRemoved,
+        })}
+      </Box>
+    )
+  }
+
+  const tile = (row: Row) => {
+    const snap = snaps[row.path]
+
+    return (
+      <Box
+        key={`tile:${row.path}`}
+        flexDirection="column"
+        borderStyle="round"
+        borderColor="subtle"
+        paddingX={1}
+        marginLeft={4}
+      >
+        {!snap && <Text dimColor>scanning…</Text>}
+        {details(row.path, snap, {
+          branch: snap?.branch ?? row.branch ?? nameOf(row.path),
+          filesKey: `${rowKey(row)}:files`,
+          pullsKey: `${rowKey(row)}:pulls`,
+          pullList: byPath[row.path] ?? [],
+          isDim: false,
+          canAct: true,
+        })}
       </Box>
     )
   }
@@ -478,14 +526,16 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
     ].join(' · ')
 
     return [
-      <Text key={`row:${row.path}`} wrap="truncate-end">
-        {'  '}
-        <Text color={row.isGone ? 'subtle' : isAtRisk ? 'warning' : 'success'}>●</Text>
-        {` ${fit(nameOf(row.path), nameRoom).padEnd(nameRoom)}  `}
-        {hasBranch && <Text dimColor>{`${fit(row.branch ?? 'detached', branchWidth).padEnd(branchWidth)}  `}</Text>}
-        <Text color={prTextColor(row)}>{prText(row).padEnd(PR_WIDTH)}</Text>
-        <Text dimColor>{`  ${ageOf(row).padStart(ageWidth)}`}</Text>
-      </Text>,
+      <Button key={rowKey(row)} plain onPress={openRow(row)}>
+        <Text wrap="truncate-end">
+          {'  '}
+          <Text color={row.isGone ? 'subtle' : isAtRisk ? 'warning' : 'success'}>●</Text>
+          {` ${fit(nameOf(row.path), nameRoom).padEnd(nameRoom)}  `}
+          {hasBranch && <Text dimColor>{`${fit(row.branch ?? 'detached', branchWidth).padEnd(branchWidth)}  `}</Text>}
+          <Text color={prTextColor(row)}>{prText(row).padEnd(PR_WIDTH)}</Text>
+          <Text dimColor>{`  ${ageOf(row).padStart(ageWidth)}`}</Text>
+        </Text>
+      </Button>,
       ...(note
         ? [
             <Text
@@ -498,6 +548,7 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
             </Text>,
           ]
         : []),
+      ...(open.includes(rowKey(row)) ? [tile(row)] : []),
     ]
   }
   const tally = (rows: Row[]) =>

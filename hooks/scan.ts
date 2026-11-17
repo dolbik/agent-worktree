@@ -25,6 +25,7 @@ const pulls = atom(
   { byPath: {}, unknown: [], at: 0 },
   { shape: 'pulls-3' },
 )
+const expanded = atom({ plugin: 'agent-worktree', key: 'expanded' } as const, [], { shape: 'expanded-1' })
 const problems = atom({ plugin: 'agent-worktree', key: 'problems' } as const, [], {
   shape: 'problems-1',
 })
@@ -447,11 +448,18 @@ async function refreshNow($: EngineInterface, isFull: boolean) {
     }),
   )
 
+  const opened = await read($, expanded)
+  const tiles = await Promise.all(
+    others
+      .filter(one => opened.includes(`other:${one.path}`))
+      .map(async one => [one.path, await snapOf($, one.path, bases[one.repo])] as const),
+  )
+
   await update($, grove, () => ({
     repoOf,
     others: rows,
     rowsAt: isStale ? now : previous.rowsAt,
-    snaps,
+    snaps: { ...snaps, ...Object.fromEntries(tiles) },
     agents: Object.fromEntries(Object.entries(badges).filter(([path]) => ownPaths.includes(path))),
   }))
   // PR rows are only drawn in the pane, so GitHub is asked once a minute only while it is open
