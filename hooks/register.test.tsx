@@ -60,14 +60,15 @@ const repoGit =
     return answers[key]
   }
 
-const agentRow = (status: string) =>
+const agentRow = (status: string, tokenCount = 45000) =>
   ({
     id: 'ag1',
     description: 'fix auth',
     label: 'fix auth',
     status,
     model: 'opus',
-    tokenCount: 45000,
+    tokenCount,
+    tokenSamples: [1000, 20000, 45000],
     startTime: 0,
     cwd: AGENT_WT,
   }) as never
@@ -148,14 +149,13 @@ test('git output becomes the card numbers and the file list', async ($, on) => {
 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   await ui.press({ key: 'refresh' })
-  expect((await ui.find({ type: 'Text', text: /↑/ }))?.text).toContain(
-    'worktree-fix-auth · ↑1 ↓0 vs main · 1 dirty · 1 files +1 −0',
-  )
+  expect((await ui.find({ type: 'Text', text: /↑/ }))?.text).toBe('worktree-fix-auth  ↑1 ↓0 main · 1 dirty')
+  expect((await ui.find({ type: 'Text', text: /█/ }))?.text).toMatch(/^█+ \+1 −0 · 1 files$/)
   expect((await ui.find({ type: 'Text', text: /^base/ }))?.text).toBe('base main')
   expect(await ui.find({ type: 'Text', text: /a\.txt/ })).toBeUndefined()
   await ui.press({ key: `${WT}:files` })
-  expect((await ui.find({ type: 'Text', text: /a\.txt/ }))?.text).toBe('    A a.txt')
-  expect((await ui.find({ type: 'Text', text: /b\.txt/ }))?.text).toBe('    ?? b.txt (uncommitted)')
+  expect((await ui.find({ type: 'Text', text: /a\.txt/ }))?.text).toBe('  A  a.txt')
+  expect((await ui.find({ type: 'Text', text: /b\.txt/ }))?.text).toBe('  ?? b.txt (uncommitted)')
   await ui.press({ key: `${WT}:Review diff` })
   await ui.unmount()
 
@@ -197,7 +197,7 @@ test('a background agent gets its worktree, live badge, View, and a done toast',
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   await ui.press({ key: 'refresh' })
   expect((await ui.find({ type: 'Text', text: /⎇ agent-1/ }))?.text).toContain('agent "fix auth"')
-  expect((await ui.find({ type: 'Text', text: /●/ }))?.text).toContain('● running opus 45k tok 3m')
+  expect((await ui.find({ type: 'Text', text: /●/ }))?.text).toBe('● running · opus · 45k tok · 3m ▁▄█')
   expect(await ui.find({ type: 'Text', text: /Other Claude worktrees/ })).toBeUndefined()
   await ui.press({ key: `${AGENT_WT}:view` })
   expect(seen.views).toEqual(['ag1'])
@@ -208,6 +208,9 @@ test('a background agent gets its worktree, live badge, View, and a done toast',
   await ui.press({ key: 'refresh' })
   await ui.press({ key: 'refresh' })
   expect(seen.toasts).toEqual(['agent "fix auth" done: ↑1 · 2 files'])
+  seen.agents.rows = [agentRow('completed', 1_234_567)]
+  await ui.press({ key: 'refresh' })
+  expect((await ui.find({ type: 'Text', text: /●/ }))?.text).toContain('1.2M tok')
   await ui.unmount()
 })
 
@@ -256,4 +259,39 @@ test('outside a git repo the header says so and the band stays out', async ($, o
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect(await band.find({ type: 'Text', text: /worktree/ })).toBeUndefined()
   await band.unmount()
+})
+
+test('a narrow pane drops the bar and shortens the buttons', async ($, on) => {
+  engine(on, repoGit([WT]))
+  await start($)
+  await $.tool.call({ tool: 'EnterWorktree', name: 'fix-auth' })
+
+  const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 50 }, surface: 'terminal' })
+  await ui.press({ key: 'refresh' })
+  expect((await ui.find({ type: 'Text', text: /↑/ }))?.text).toBe('worktree-fix-auth  ↑1 ↓0 main · 1 dirty +1 −0')
+  expect(await ui.find({ type: 'Text', text: /█/ })).toBeUndefined()
+  expect((await ui.find({ type: 'Button', key: `${WT}:Investigate` }))?.text).toBe('Inv')
+  await ui.unmount()
+})
+
+test('the diff bar scales each card against the largest diff', async ($, on) => {
+  const base = repoGit([WT, AGENT_WT])
+  engine(on, (argv, cwd) =>
+    argv[1] === 'diff' && argv[2] === '--shortstat'
+      ? cwd === WT
+        ? ' 1 file changed, 1 insertion(+), 1 deletion(-)'
+        : ' 1 file changed, 4 insertions(+)'
+      : base(argv, cwd),
+  )
+  await start($)
+  await $.tool.call({ tool: 'EnterWorktree', name: 'fix-auth' })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.press({ key: 'refresh' })
+  expect((await ui.find({ type: 'Text', text: /\+1 −1/ }))?.text).toBe(
+    `${'█'.repeat(12)}${'░'.repeat(12)} +1 −1 · 1 files`,
+  )
+  expect((await ui.find({ type: 'Text', text: /\+4 −0/ }))?.text).toBe(`${'█'.repeat(24)} +4 −0 · 1 files`)
+  expect((await ui.find({ type: 'Text', text: /^█{6}$/ }))?.text).toBe('█'.repeat(6))
+  await ui.unmount()
 })

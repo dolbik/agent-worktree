@@ -15,13 +15,23 @@ Open the pane with `/worktrees`. It also opens by itself when the session makes
 its first worktree.
 
 ```
-⎇ agent-1 agent "fix auth"
-  worktree-agent-1 · ↑3 ↓0 vs main · 2 dirty · 5 files +120 −14
-  last: Add login form · 12 minutes ago
-  ● running opus 45k tok 3m
-  ⚠ overlaps fix-auth: src/auth.ts, src/login.ts (+1)
-  [ Investigate ] [ Review diff ] [ Cleanup check ] [ Files (5) ] [ View agent ]
+╭──────────────────────────────────────────────────────────────╮
+│ ⎇ agent-1 agent "fix auth"                                   │
+│ worktree-agent-1  ↑3 ↓0 main · 2 dirty                       │
+│ █████████████████████░ +120 −14 · 5 files                    │
+│ Add login form · 12 minutes ago                              │
+│ ● running · opus · 45k tok · 3m ▁▂▃▅▆▇█                      │
+│ ⚠ overlaps fix-auth: src/auth.ts, src/login.ts (+1)          │
+│ [ Investigate ] [ Review diff ] [ Cleanup check ] [ Files (5) ] [ View agent ] │
+╰──────────────────────────────────────────────────────────────╯
 ```
+
+Each worktree is a framed card: accent border for the one the session is in,
+green while its agent runs, dim for removed and outside worktrees. Numbers are
+coloured (`↑` green, `↓` and `dirty` yellow, `+` green, `−` red), the bar shows
+lines added and removed scaled across all cards, and the sparkline traces the
+agent's token use over its last 16 readings. Below 60 columns a card drops the
+bar, last commit and sparkline, and shortens its buttons.
 
 - **This session**: worktrees made by the `EnterWorktree` tool and by agents
   started with `isolation: "worktree"`. The worktree the session is in is
@@ -31,7 +41,7 @@ its first worktree.
 - **Each card**: branch, commits ahead and behind the main worktree's branch,
   uncommitted file count, diff size, last commit and its age.
 - **Live agent**: the agent working in the worktree, matched by its directory:
-  status, model, tokens and minutes since it started. `View agent` opens its
+  status, model, tokens, minutes since it started and a token sparkline. `View agent` opens its
   transcript. A background agent's card finds its worktree this way too.
 - **Overlap warning**: files changed in two worktrees at once, the early sign
   of a merge conflict between parallel agents.

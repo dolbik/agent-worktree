@@ -16,7 +16,7 @@ const tracked = atom({ plugin: 'agent-worktree', key: 'tracked' } as const, [], 
 const grove = atom(
   { plugin: 'agent-worktree', key: 'grove' } as const,
   { others: [], snaps: {}, agents: {} },
-  { shape: 'grove-2' },
+  { shape: 'grove-3' },
 )
 const expanded = atom({ plugin: 'agent-worktree', key: 'expanded' } as const, [], {
   shape: 'expanded-1',
@@ -81,6 +81,7 @@ const badgeOf = (agent: AgentInfo): AgentBadge => ({
   status: agent.status,
   model: agent.model,
   tokenCount: agent.tokenCount,
+  samples: agent.tokenSamples,
   startTime: agent.startTime,
 })
 
@@ -168,25 +169,33 @@ const prompts = (path: string, branch: string, base?: string) => {
   }
 }
 
-const statusLine = (snap?: Snap) => {
-  if (!snap) return 'scanning…'
-  if (snap.isGone) return 'gone from disk'
-  const stat = snap.shortstat?.match(/(\d+) files? changed(?:, (\d+) insertions?\(\+\))?(?:, (\d+) deletions?\(-\))?/)
-  const parts = [
-    snap.base ? `↑${snap.ahead} ↓${snap.behind} vs ${snap.base}` : undefined,
-    snap.dirty ? `${snap.dirty} dirty` : 'clean',
-    stat ? `${stat[1]} files +${stat[2] ?? 0} −${stat[3] ?? 0}` : undefined,
-  ]
+const SPARK = '▁▂▃▄▅▆▇█'
+const BAR_WIDTH = 24
 
-  return parts.filter(Boolean).join(' · ')
+const diffOf = (snap?: Snap) => {
+  const stat = snap?.shortstat?.match(/(\d+) files? changed(?:, (\d+) insertions?\(\+\))?(?:, (\d+) deletions?\(-\))?/)
+
+  return stat ? { files: Number(stat[1]), add: Number(stat[2] ?? 0), del: Number(stat[3] ?? 0) } : undefined
 }
 
-const agentLine = (badge: AgentBadge, now: number) => {
-  const tokens = badge.tokenCount >= 1000 ? `${Math.round(badge.tokenCount / 1000)}k` : `${badge.tokenCount}`
-  const minutes = Math.max(0, Math.round((now - badge.startTime) / 60000))
+const barOf = (add: number, del: number, scale: number, width: number) => {
+  const cells = (n: number) => (n > 0 ? Math.max(1, Math.round((n / scale) * width)) : 0)
+  const green = cells(add)
+  const red = Math.min(cells(del), width - green)
 
-  return ['●', badge.status, badge.model, `${tokens} tok`, `${minutes}m`].filter(Boolean).join(' ')
+  return { green: '█'.repeat(green), red: '█'.repeat(red), rest: '░'.repeat(Math.max(0, width - green - red)) }
 }
+
+const sparkOf = (samples: number[]) => {
+  if (samples.length < 2) return ''
+  const low = Math.min(...samples)
+  const high = Math.max(...samples)
+
+  return samples.map(n => SPARK[high === low ? 0 : Math.round(((n - low) / (high - low)) * 7)]).join('')
+}
+
+const tokensOf = (n: number) =>
+  n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`
 
 const livePaths = (list: { path: string; isRemoved: boolean }[], others: string[]) => [
   ...list.filter(one => one.path && !one.isRemoved).map(one => one.path),
@@ -307,16 +316,25 @@ export const register: Register = on => {
 
     const { Box, Text, Button } = $.ui.resolve(e)
     const overlaps = overlapsOf(snaps, paths)
-    const parts = [
-      `⎇ ${paths.length} worktree${paths.length === 1 ? '' : 's'}`,
-      `${paths.filter(path => (snaps[path]?.dirty ?? 0) > 0).length} dirty`,
-      `${paths.filter(path => ACTIVE.includes(agents[path]?.status ?? '')).length} running`,
-      `${paths.filter(path => (overlaps[path]?.length ?? 0) > 0).length} overlap`,
-    ]
+    const count = (n: number, word: string, color: 'warning' | 'success') => (
+      <Text color={n > 0 ? color : undefined} dimColor={n === 0}>
+        {n} {word}
+      </Text>
+    )
 
     return (
       <Box flexDirection="row" gap={1}>
-        <Text dimColor>{parts.join(' · ')}</Text>
+        <Text>
+          <Text color="claude">
+            ⎇ {paths.length} worktree{paths.length === 1 ? '' : 's'}
+          </Text>
+          <Text dimColor> · </Text>
+          {count(paths.filter(path => (snaps[path]?.dirty ?? 0) > 0).length, 'dirty', 'warning')}
+          <Text dimColor> · </Text>
+          {count(paths.filter(path => ACTIVE.includes(agents[path]?.status ?? '')).length, 'running', 'success')}
+          <Text dimColor> · </Text>
+          {count(paths.filter(path => (overlaps[path]?.length ?? 0) > 0).length, 'overlap', 'warning')}
+        </Text>
         <Button key="open" onPress={() => void openPane($)}>
           Open
         </Button>
@@ -331,51 +349,105 @@ export const register: Register = on => {
     const open = await read($, expanded)
     const now = await $.clock.now()
     const overlaps = overlapsOf(snaps, livePaths(list, others))
+    const isNarrow = e.props.bodyColumns < 60
+    const scale = Math.max(1, ...Object.values(snaps).map(snap => (diffOf(snap)?.add ?? 0) + (diffOf(snap)?.del ?? 0)))
     const ask = (text: string) => () => void $.prompt.submit({ text })
     const toggle = (key: string) => () =>
       void update($, expanded, keys => (keys.includes(key) ? keys.filter(one => one !== key) : [...keys, key]))
+    const short: Record<string, string> = { Investigate: 'Inv', 'Review diff': 'Diff', 'Cleanup check': 'Clean' }
+    const fileColor = (status: string) =>
+      status === 'A' ? 'success' : status === 'D' ? 'error' : status === '??' ? undefined : 'warning'
 
-    const card = (key: string, path: string, title: string, badges: (string | undefined)[], isDim: boolean) => {
+    const card = (key: string, path: string, title: string, badges: (string | undefined)[], tone: 'here' | 'plain' | 'dim') => {
       const snap = snaps[path]
       const agent = agents[path]
+      const isActive = !!agent && ACTIVE.includes(agent.status)
+      const isDim = tone === 'dim'
       const branch = snap?.branch ?? nameOf(path)
       const files = snap?.files ?? []
+      const diff = diffOf(snap)
+      const bar = diff && barOf(diff.add, diff.del, scale, BAR_WIDTH)
+      const spark = agent ? sparkOf(agent.samples) : ''
       const isMerged = !!snap && !snap.isGone && !!snap.base && snap.ahead === 0 && snap.dirty === 0
       const badge = [...badges, isMerged ? 'nothing unmerged · clean' : undefined].filter(Boolean).join(' · ')
       const isOpen = open.includes(key)
 
       return (
-        <Box key={key} flexDirection="column" marginBottom={1}>
+        <Box
+          key={key}
+          flexDirection="column"
+          borderStyle="round"
+          borderColor={tone === 'here' ? 'claude' : isActive ? 'success' : 'subtle'}
+          borderDimColor={isDim}
+          paddingX={1}
+        >
           <Text bold={!isDim} dimColor={isDim}>
             ⎇ {title} <Text dimColor>{badge}</Text>
           </Text>
-          <Text dimColor>  {branch} · {statusLine(snap)}</Text>
-          {snap?.lastSubject && (
-            <Text dimColor>  last: {snap.lastSubject} · {snap.lastAge}</Text>
+          {!snap && <Text dimColor>scanning…</Text>}
+          {snap?.isGone && <Text color="error">gone from disk</Text>}
+          {snap && !snap.isGone && (
+            <Text>
+              <Text dimColor>{branch}</Text>
+              {snap.base && (
+                <Text>
+                  {'  '}
+                  <Text color={snap.ahead ? 'success' : undefined} dimColor={!snap.ahead}>↑{snap.ahead}</Text>{' '}
+                  <Text color={snap.behind ? 'warning' : undefined} dimColor={!snap.behind}>↓{snap.behind}</Text>
+                  <Text dimColor> {snap.base}</Text>
+                </Text>
+              )}
+              <Text dimColor> · </Text>
+              {snap.dirty ? <Text color="warning">{snap.dirty} dirty</Text> : <Text color="success">clean</Text>}
+              {isNarrow && diff && (
+                <Text>
+                  {' '}<Text color="success">+{diff.add}</Text> <Text color="error">−{diff.del}</Text>
+                </Text>
+              )}
+            </Text>
+          )}
+          {!isNarrow && diff && bar && (
+            <Text>
+              <Text color="success">{bar.green}</Text>
+              <Text color="error">{bar.red}</Text>
+              <Text dimColor>{bar.rest}</Text>{' '}
+              <Text color="success">+{diff.add}</Text> <Text color="error">−{diff.del}</Text>
+              <Text dimColor> · {diff.files} files</Text>
+            </Text>
+          )}
+          {!isNarrow && snap?.lastSubject && (
+            <Text dimColor>
+              {snap.lastSubject} · {snap.lastAge}
+            </Text>
           )}
           {agent && (
-            <Text dimColor={!ACTIVE.includes(agent.status)} color={ACTIVE.includes(agent.status) ? 'green' : undefined}>
-              {'  '}{agentLine(agent, now)}
+            <Text dimColor={!isActive}>
+              <Text color={isActive ? 'success' : undefined}>●</Text> {agent.status}
+              {agent.model ? ` · ${agent.model}` : ''} · {tokensOf(agent.tokenCount)} tok ·{' '}
+              {Math.max(0, Math.round((now - agent.startTime) / 60000))}m
+              {!isNarrow && spark && <Text color="claude"> {spark}</Text>}
             </Text>
           )}
           {(overlaps[path] ?? []).map(hit => (
-            <Text color="yellow">
-              {'  '}⚠ overlaps {nameOf(hit.other)}: {hit.files.slice(0, 2).join(', ')}
+            <Text color="warning">
+              ⚠ overlaps {nameOf(hit.other)}: {hit.files.slice(0, 2).join(', ')}
               {hit.files.length > 2 ? ` (+${hit.files.length - 2})` : ''}
             </Text>
           ))}
           {isOpen &&
             files.slice(0, 20).map(file => (
-              <Text dimColor>
-                {'    '}{file.status} {file.path}{file.isUncommitted ? ' (uncommitted)' : ''}
+              <Text>
+                {'  '}<Text color={fileColor(file.status)} dimColor={file.status === '??'}>{file.status.padEnd(2)}</Text>{' '}
+                {file.path}
+                {file.isUncommitted ? <Text dimColor> (uncommitted)</Text> : ''}
               </Text>
             ))}
-          {isOpen && files.length > 20 && <Text dimColor>    +{files.length - 20} more</Text>}
+          {isOpen && files.length > 20 && <Text dimColor>  +{files.length - 20} more</Text>}
           {path && !snap?.isGone && (
             <Box flexDirection="row" gap={1}>
               {Object.entries(prompts(path, branch, snap?.base ?? base)).map(([label, text]) => (
                 <Button key={`${path}:${label}`} onPress={ask(text)}>
-                  {label}
+                  {isNarrow ? (short[label] ?? label) : label}
                 </Button>
               ))}
               {files.length > 0 && (
@@ -385,7 +457,7 @@ export const register: Register = on => {
               )}
               {agent && (
                 <Button key={`${path}:view`} onPress={() => void $.ui.view({ agentId: agent.id })}>
-                  View agent
+                  {isNarrow ? 'View' : 'View agent'}
                 </Button>
               )}
             </Box>
@@ -396,8 +468,14 @@ export const register: Register = on => {
 
     return (
       <Box flexDirection="column">
-        <Box flexDirection="row" gap={1} marginBottom={1}>
-          {repo ? <Text bold>{repo}</Text> : <Text dimColor>no git repo</Text>}
+        <Box flexDirection="row" gap={1}>
+          {repo ? (
+            <Text bold color="claude">
+              {repo}
+            </Text>
+          ) : (
+            <Text dimColor>no git repo</Text>
+          )}
           {repo && base && <Text dimColor>base {base}</Text>}
           <Button key="refresh" onPress={() => void refresh($)}>
             Refresh
@@ -415,11 +493,11 @@ export const register: Register = on => {
               one.isRunning ? 'running' : undefined,
               one.isRemoved ? 'removed' : undefined,
             ],
-            one.isRemoved,
+            one.isRemoved ? 'dim' : one.isHere ? 'here' : 'plain',
           ),
         )}
         {others.length > 0 && <Text dimColor>Other Claude worktrees</Text>}
-        {others.map(path => card(path, path, nameOf(path), ['other session'], true))}
+        {others.map(path => card(path, path, nameOf(path), ['not from this session'], 'dim'))}
       </Box>
     )
   })

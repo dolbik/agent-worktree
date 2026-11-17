@@ -30,6 +30,7 @@ export type AgentBadge = {
   status: string
   model?: string
   tokenCount: number
+  samples: number[]
   startTime: number
 }
 
