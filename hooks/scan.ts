@@ -51,9 +51,9 @@ function status($: EngineInterface, path: string) {
 
 async function countsOf($: EngineInterface, path: string, base?: string) {
   const counts = base ? await git($, path, 'rev-list', '--left-right', '--count', `${base}...HEAD`) : undefined
-  const [behind = 0, ahead = 0] = (counts ?? '').trim().split(/\s+/).map(Number)
+  const [behind, ahead] = (counts ?? '').trim().split(/\s+/).map(Number)
 
-  return { ahead: ahead || 0, behind: behind || 0 }
+  return counts !== undefined && Number.isFinite(ahead) && Number.isFinite(behind) ? { ahead, behind } : {}
 }
 
 async function snapOf($: EngineInterface, path: string, base?: string): Promise<Snap> {
@@ -86,7 +86,8 @@ async function snapOf($: EngineInterface, path: string, base?: string): Promise<
     isGone: false,
     branch,
     base,
-    ...counts,
+    ahead: counts.ahead ?? 0,
+    behind: counts.behind ?? 0,
     dirty: lines(changes).length,
     shortstat: shortstat?.trim() || undefined,
     lastSubject: lastSubject || undefined,
@@ -114,7 +115,7 @@ async function rowOf($: EngineInterface, one: Listed & { repo: string }, base?: 
   }
 }
 
-let own: { pid: number; startedAt: string } | undefined
+let own: { pid: number; startedAt: string } | null | undefined
 
 // Claude Code locks a worktree it makes with `claude session <name> (pid <its pid> start <its start, UTC>)`
 async function ownProcess($: EngineInterface) {
@@ -254,7 +255,7 @@ async function refreshNow($: EngineInterface, isFull: boolean) {
     mine.add(entry.path)
   }
   const lockedHere = listed.filter(one => !mine.has(one.path) && one.lock && parseLock(one.lock))
-  if (lockedHere.length > 0) own ??= await ownProcess($)
+  if (lockedHere.length > 0 && own === undefined) own = (await ownProcess($)) ?? null
   for (const one of lockedHere) {
     const lock = parseLock(one.lock as string)
     if (!own || lock?.pid !== own.pid || !sameText(lock.startedAt, own.startedAt)) continue
@@ -304,13 +305,19 @@ async function refreshNow($: EngineInterface, isFull: boolean) {
     ),
   )
   // Claude Code deletes an agent's worktree when the agent ends with no changes
-  const isDeleted = (one: Tracked) =>
-    one.how === 'agent' &&
-    !!snaps[one.path]?.isGone &&
-    !ACTIVE.includes(agents.find(agent => agent.id === one.agentId)?.status ?? '')
-  const deleted = new Set(live.filter(isDeleted).map(one => one.toolUseId))
-  if (deleted.size > 0) await update($, tracked, list => list.filter(one => !deleted.has(one.toolUseId)))
-  const ownPaths = live.filter(one => !deleted.has(one.toolUseId)).map(one => one.path)
+  const gone = live.filter(
+    one => snaps[one.path]?.isGone && !ACTIVE.includes(agents.find(agent => agent.id === one.agentId)?.status ?? ''),
+  )
+  // Claude Code deletes an agent's worktree when the agent ends with no changes; any other gone folder was removed
+  const deleted = new Set(gone.filter(one => one.how === 'agent').map(one => one.toolUseId))
+  const removed = new Set(gone.filter(one => one.how !== 'agent').map(one => one.toolUseId))
+  if (gone.length > 0)
+    await update($, tracked, list =>
+      list
+        .filter(one => !deleted.has(one.toolUseId))
+        .map(one => (removed.has(one.toolUseId) ? { ...one, isRemoved: true } : one)),
+    )
+  const ownPaths = live.filter(one => !gone.includes(one)).map(one => one.path)
   const livePaths = live.map(one => one.path)
   const badgePaths = [...new Set([...paths, ...livePaths])]
   const badges: Record<string, AgentBadge> = {}

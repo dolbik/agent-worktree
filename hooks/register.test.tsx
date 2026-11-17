@@ -397,7 +397,7 @@ test('worktrees of agents and nested subagents no hook saw become this session�
   expect(found.some(one => one.includes('OTHER WORKTREES'))).toBe(false)
 
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  expect((await band.find({ type: 'Text', text: /worktrees/ }))?.text).toMatch(/^⎇ 2 worktrees \(◆ 2 agent\) · /)
+  expect((await band.find({ type: 'Text', text: /worktrees/ }))?.text).toMatch(/^⎇ 2 worktrees \(◆ 2 agents\) · /)
   await band.unmount()
 })
 
@@ -820,4 +820,82 @@ test('a background agent that ends before a refresh, in a repository not listed 
   const found = await texts($)
   expect(found).toContain('THIS SESSION  1 worktree')
   expect(found.some(one => one.startsWith('◆ agent-ag1'))).toBe(true)
+})
+
+test('a worktree removed with git shows as removed and leaves the counts', async ($, on) => {
+  const SIDE = { path: '/repo/.claude/worktrees/side', branch: 'side' }
+  const w = world(on, { '/repo': [MAIN] })
+  on('tool.call', { tool: 'Bash' }, (_, e) => {
+    if (e.command.includes(' add ')) w.repos['/repo']?.push(SIDE)
+    else {
+      w.repos['/repo'] = [MAIN]
+      w.gone.add(SIDE.path)
+    }
+
+    return { result: { stdout: '', stderr: '', interrupted: false } as never }
+  })
+  await start($)
+  await $.tool.call({ tool: 'Bash', command: 'git worktree add .claude/worktrees/side -b side' })
+  await $.tool.call({ tool: 'Bash', command: 'git worktree remove .claude/worktrees/side' })
+
+  expect(await texts($)).toContain('⎇ side  removed')
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await band.find({ type: 'Text', text: /worktree/ })).toBeUndefined()
+  await band.unmount()
+})
+
+test('rows of a repository with no base branch show no ahead and behind counts', async ($, on) => {
+  const O = { path: '/repo/.claude/worktrees/o', branch: 'feat-o' }
+  world(on, { '/repo': [{ path: '/repo', branch: '' }, WT, O] })
+  enters(on, WT)
+  await start($)
+  await $.tool.call({ tool: 'EnterWorktree', name: 'fix-auth' })
+
+  expect(await texts($)).toContain('● o  feat-o  1 minute ago')
+})
+
+test('a repository the person opened stays open when the order of repositories changes', async ($, on) => {
+  const B1 = { path: '/other/.claude/worktrees/b1', branch: 'b1' }
+  const B2 = { path: '/other/.claude/worktrees/b2', branch: 'b2' }
+  const A1 = { path: '/repo/.claude/worktrees/a1', branch: 'a1' }
+  const w = world(on, { '/repo': [MAIN, WT, A1], '/other': [{ path: '/other', branch: 'main' }, B2] })
+  const entered = [WT, B1]
+  on('tool.call', { tool: 'EnterWorktree' }, () => {
+    const wt = entered.shift() ?? WT
+
+    return { result: { worktreePath: wt.path, worktreeBranch: wt.branch, message: 'ok' } }
+  })
+  on('tool.call', { tool: 'Bash' }, () => {
+    w.repos['/other']?.push(B1)
+
+    return { result: { stdout: '', stderr: '', interrupted: false } as never }
+  })
+  await start($)
+  await $.tool.call({ tool: 'EnterWorktree', name: 'fix-auth' })
+  await $.tool.call({ tool: 'Bash', command: 'git -C /other worktree add .claude/worktrees/b1 -b b1' })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.press({ key: 'refresh' })
+  const rows = async () => (await ui.findAll({ type: 'Text' })).map(one => one.text).filter(one => one.startsWith('● '))
+  expect((await rows()).some(one => one.startsWith('● b2'))).toBe(false)
+  await ui.press({ key: 'repo:/other' })
+  expect((await rows()).some(one => one.startsWith('● b2'))).toBe(true)
+  await $.tool.call({ tool: 'EnterWorktree', path: B1.path } as never)
+  await ui.press({ key: 'refresh' })
+  expect((await rows()).some(one => one.startsWith('● b2'))).toBe(true)
+  await ui.unmount()
+})
+
+test('a failed check of the session’s process is not repeated on every refresh', async ($, on) => {
+  const OTHER = {
+    path: '/repo/.claude/worktrees/someone',
+    branch: 'worktree-someone',
+    lock: 'claude session someone (pid 77 start Tue Nov 17 07:00:00 2026)',
+  }
+  const w = world(on, { '/repo': [MAIN, OTHER] })
+  await start($)
+  await texts($)
+  await texts($)
+
+  expect(w.pidReads).toBe(1)
 })

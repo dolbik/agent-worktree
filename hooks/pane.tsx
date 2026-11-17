@@ -101,7 +101,9 @@ export const madeBy = (one: Tracked) => {
 }
 
 const rowFacts = (row: Row) =>
-  row.isGone ? 'folder gone' : row.ahead === undefined ? '' : `↑${row.ahead} ↓${row.behind} · ${row.age ?? ''}`
+  row.isGone
+    ? 'folder gone'
+    : [row.ahead === undefined ? undefined : `↑${row.ahead} ↓${row.behind}`, row.age].filter(Boolean).join(' · ')
 
 export async function drawPane($: EngineInterface, ui: ElementTable, width: number) {
   const { Box, Text, Button } = ui
@@ -327,13 +329,23 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
     const rows = others.filter(row => row.repo === repo)
     const key = `repo:${repo}`
     const isFolding = otherRepos.length > 1
-    const isShown = !isFolding || (index === 0) !== open.includes(key)
+    // a choice is stored as open or closed, so it holds when the order of repositories changes
+    const isShown =
+      !isFolding || (open.includes(`${key}:open`) ? true : open.includes(`${key}:closed`) ? false : index === 0)
     const dirty = rows.filter(row => row.dirty).length
     const order = [...rows].sort((a, b) => Number(!!b.dirty) - Number(!!a.dirty))
     const header = isFolding ? (
       <Box key={key} flexDirection="row">
         <Text dimColor>{isShown ? '▾ ' : '▸ '}</Text>
-        <Button key={key} onPress={toggle(key)}>
+        <Button
+          key={key}
+          onPress={() =>
+            void update($, expanded, keys => [
+              ...keys.filter(one => one !== `${key}:open` && one !== `${key}:closed`),
+              `${key}:${isShown ? 'closed' : 'open'}`,
+            ])
+          }
+        >
           {nameOf(repo)}
         </Button>
         <Text wrap="truncate-end">
@@ -397,7 +409,7 @@ export async function drawBand($: EngineInterface, ui: ElementTable) {
     <Box flexDirection="row" gap={1}>
       <Text wrap="truncate-end">
         <Text color="claude">⎇ {count(paths.length, 'worktree', 'worktrees')}</Text>
-        {byAgents > 0 && <Text color="suggestion"> (◆ {byAgents} agent)</Text>}
+        {byAgents > 0 && <Text color="suggestion"> (◆ {count(byAgents, 'agent', 'agents')})</Text>}
         <Text dimColor> · </Text>
         {tally(paths.filter(path => (snaps[path]?.dirty ?? 0) > 0).length, 'dirty', 'warning')}
         <Text dimColor> · </Text>
