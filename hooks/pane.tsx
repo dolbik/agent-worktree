@@ -77,16 +77,23 @@ const tokensOf = (n: number) =>
   n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`
 
 const two = (n: number) => String(n).padStart(2, '0')
-export const clockOf = (at: number) => {
-  const date = new Date(at)
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
-  return `${two(date.getHours())}:${two(date.getMinutes())}`
+// the time alone for today, else the date before it, with the year when it is another year
+export const clockOf = (at: number, now: number) => {
+  const date = new Date(at)
+  const today = new Date(now)
+  const time = `${two(date.getHours())}:${two(date.getMinutes())}`
+  if (date.toDateString() === today.toDateString()) return time
+  const year = date.getFullYear() === today.getFullYear() ? '' : ` ${date.getFullYear()}`
+
+  return `${date.getDate()} ${MONTHS[date.getMonth()]}${year} ${time}`
 }
 
 const fit = (text: string, width: number) => (text.length <= width ? text : `${text.slice(0, Math.max(0, width - 1))}…`)
 const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
 
-export const madeBy = (one: Tracked) => {
+export const madeBy = (one: Tracked, now: number) => {
   const who = isAgentMade(one) ? `subagent «${one.label ?? one.agentId ?? ''}»` : 'this session'
   const how = {
     enter: 'EnterWorktree',
@@ -95,7 +102,7 @@ export const madeBy = (one: Tracked) => {
     lock: one.agentId === undefined ? 'EnterWorktree' : undefined,
     agent: one.isBackground ? 'background' : undefined,
   }[one.how]
-  const at = one.at === undefined ? '' : ` at ${clockOf(one.at)}`
+  const at = one.at === undefined ? '' : ` at ${clockOf(one.at, now)}`
 
   return `${one.how === 'entered' ? 'entered by' : 'made by'} ${who}${at}${how ? ` · ${how}` : ''}`
 }
@@ -174,7 +181,7 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
           {one.isRemoved && <Text dimColor>{'  removed'}</Text>}
         </Text>
         <Text wrap="truncate-end" color="suggestion" dimColor={isDim}>
-          {madeBy(one)}
+          {madeBy(one, now)}
         </Text>
         {agent && lineage.length > 0 && (
           <Text wrap="truncate-end" dimColor>
@@ -278,12 +285,12 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
 
   const problemLine = (problem: Problem) => {
     const who = problem.who === undefined ? 'this session' : `subagent «${problem.who}»`
-    const lead = `✗ ${clockOf(problem.at)}  ${who}  ${problem.what}  `
+    const lead = `✗ ${clockOf(problem.at, now)}  ${who}  ${problem.what}  `
 
     return (
       <Text wrap="truncate-end">
         <Text color="error">✗</Text>
-        {` ${clockOf(problem.at)}  `}
+        {` ${clockOf(problem.at, now)}  `}
         <Text color="suggestion">{who}</Text>
         {`  ${problem.what}  `}
         <Text color="error">{fit(problem.cause, Math.max(10, width - lead.length))}</Text>

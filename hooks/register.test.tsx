@@ -39,7 +39,7 @@ const BAND = {
 } as const
 
 const NOW = 3 * 60000
-const AT = clockOf(NOW)
+const AT = clockOf(NOW, NOW)
 const MAIN = { path: '/repo', branch: 'main' }
 const WT = { path: '/repo/.claude/worktrees/fix-auth', branch: 'worktree-fix-auth' }
 const AGENT_WT = { path: '/repo/.claude/worktrees/agent-1', branch: 'worktree-agent-1' }
@@ -408,7 +408,7 @@ test('worktrees of agents and nested subagents no hook saw become this session�
   const found = await texts($)
   expect(found).toContain('◆ agent-1  [general-purpose]')
   expect(found).toContain('◆ scan-callers  [Explore]')
-  expect(found).toContain(`made by subagent «plan auth» at ${clockOf(0)}`)
+  expect(found).toContain(`made by subagent «plan auth» at ${clockOf(0, NOW)}`)
   expect(found).toContain('session ▸ "plan auth" ▸ ◆ "scan callers"')
   expect(found.some(one => one.includes('OTHER WORKTREES'))).toBe(false)
 
@@ -566,7 +566,7 @@ test('an agent’s worktree stays this session’s after the agent ends; the lin
   w.agents = []
   const ended = await texts($)
   expect(ended).toContain('THIS SESSION  3 worktrees')
-  expect(ended).toContain(`made by subagent «outside work» at ${clockOf(0)}`)
+  expect(ended).toContain(`made by subagent «outside work» at ${clockOf(0, NOW)}`)
   expect(ended.some(one => one.includes('OTHER WORKTREES'))).toBe(false)
 })
 
@@ -971,10 +971,18 @@ test('worktrees the session and its subagents made before the plugin loaded are 
   await start($, '/home/u')
 
   const found = await texts($)
-  const at = clockOf(Date.parse(AT1))
+  const at = clockOf(Date.parse(AT1), NOW)
   expect(found).toContain('THIS SESSION  4 worktrees')
+  expect(at).toMatch(/^12 Nov 2026 \d\d:\d\d$/)
   expect(found).toContain(`made by this session at ${at} · git worktree add`)
   expect(found).toContain(`made by this session at ${at} · EnterWorktree`)
   expect(found).toContain(`made by subagent «old helper» at ${at} · background`)
   expect(found).toContain(`made by subagent «old helper» at ${at} · git worktree add`)
+})
+
+test('a made-by time names the day when it is not today', async () => {
+  const now = new Date(2026, 10, 17, 18, 5).getTime()
+  expect(clockOf(new Date(2026, 10, 17, 9, 7).getTime(), now)).toBe('09:07')
+  expect(clockOf(new Date(2026, 10, 12, 13, 1).getTime(), now)).toBe('12 Nov 13:01')
+  expect(clockOf(new Date(2025, 11, 31, 23, 59).getTime(), now)).toBe('31 Dec 2025 23:59')
 })
