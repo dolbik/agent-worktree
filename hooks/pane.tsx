@@ -24,7 +24,7 @@ export function openPane($: EngineInterface) {
 
 export const liveTracked = (list: Tracked[]) => list.filter(one => one.path && !one.isRemoved)
 
-const isAgentMade = (one: Tracked) => one.how === 'agent' || (one.how === 'lock' && one.agentId !== undefined)
+const isAgentMade = (one: Tracked) => one.agentId !== undefined || one.how === 'agent'
 
 const overlapsOf = (snaps: Record<string, Snap>, paths: string[]) =>
   Object.fromEntries(
@@ -89,8 +89,7 @@ const fit = (text: string, width: number) => (text.length <= width ? text : `${t
 const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
 
 export const madeBy = (one: Tracked) => {
-  const who =
-    one.agentId !== undefined || one.how === 'agent' ? `subagent «${one.label ?? one.agentId ?? ''}»` : 'this session'
+  const who = isAgentMade(one) ? `subagent «${one.label ?? one.agentId ?? ''}»` : 'this session'
   const how = {
     enter: 'EnterWorktree',
     entered: 'EnterWorktree',

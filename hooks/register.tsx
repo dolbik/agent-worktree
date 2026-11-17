@@ -3,16 +3,9 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import { firstLine, resolvePath, worktreeAdds } from './detect'
 import { drawBand, drawPane, openPane } from './pane'
-import { PANE, agentLabel, complain, listAt, refresh, remember, withoutGuesses } from './scan'
+import { PANE, agentLabel, agentOf, complain, labelOf, listAt, nameOf, refresh, remember, withoutGuesses } from './scan'
 
 const tracked = atom({ plugin: 'agent-worktree', key: 'tracked' } as const, [], { shape: 'tracked-2' })
-
-async function loopDir($: EngineInterface, agentId?: string) {
-  return (
-    (agentId === undefined ? undefined : (await $.agent.list()).find(one => one.id === agentId)?.cwd) ??
-    (await $.session.cwd())
-  )
-}
 
 async function openOnFirst($: EngineInterface, wasEmpty: boolean) {
   if (wasEmpty && (await read($, tracked)).length > 0) void openPane($)
@@ -71,6 +64,7 @@ export const register: Register = on => {
         path,
         branch,
         isHere: isMain,
+        isRemoved: false,
       },
     ])
     if (isMain) $.ui.status(`⎇ ${branch ?? path.split('/').pop()}`)
@@ -154,16 +148,32 @@ export const register: Register = on => {
     const adds = worktreeAdds(String(e.command ?? ''))
     if (adds.length === 0) return next(e)
     const home = (await $.env.get('HOME')) ?? ''
-    const shell = await loopDir($, e.agentId)
-    const dirs = [...new Set(adds.map(one => resolvePath(shell, one.dir ?? '.', home)))]
+    const agent = await agentOf($, e.agentId)
+    const shell = agent?.cwd ?? (await $.session.cwd())
+    const targets = adds.map(one => {
+      const dir = resolvePath(shell, one.dir ?? '.', home)
+
+      return { dir, name: one.path === null ? undefined : nameOf(resolvePath(dir, one.path, home)) }
+    })
+    const dirs = [...new Set(targets.map(one => one.dir))]
     const before = await Promise.all(dirs.map(dir => listAt($, dir)))
     const ran = await next(e)
     if (ran.deny !== undefined) return ran
     const after = await Promise.all(dirs.map(dir => listAt($, dir)))
-    const added = after.flatMap((list, i) =>
-      (list ?? []).slice(1).filter(one => !(before[i] ?? []).some(was => was.path === one.path)),
-    )
-    const label = await agentLabel($, e.agentId)
+    // only the folders the command names, so worktrees others make meanwhile are not taken
+    const added = after.flatMap((list, i) => {
+      const was = before[i]
+      const names = targets.filter(one => one.dir === dirs[i]).map(one => one.name)
+
+      return (list ?? [])
+        .slice(1)
+        .filter(
+          one =>
+            !(was ?? []).some(old => old.path === one.path) &&
+            names.some(name => (name === undefined ? was !== undefined : name === nameOf(one.path))),
+        )
+    })
+    const label = agent ? labelOf(agent) : e.agentId
     const at = await $.clock.now()
     const wasEmpty = (await read($, tracked)).length === 0
     for (const one of added) {

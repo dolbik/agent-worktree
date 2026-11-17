@@ -63,4 +63,7 @@ test('firstLine gives the cause of a failed call', async () => {
   expect(firstLine('<tool_use_error>EnterWorktree cannot create a worktree</tool_use_error>')).toBe(
     'EnterWorktree cannot create a worktree',
   )
+  expect(firstLine("Preparing worktree (checking out 'b')\nfatal: 'b' is already used by worktree at '/x'")).toBe(
+    "'b' is already used by worktree at '/x'",
+  )
 })

@@ -37,12 +37,16 @@ export const resolvePath = (folder: string, path: string, home: string) => {
   return `/${parts.join('/')}`
 }
 
-export const firstLine = (text: string) =>
-  (text.split('\n').find(line => line.trim() !== '' && !/^Exit code \d+$/.test(line.trim())) ?? '')
+export const firstLine = (text: string) => {
+  const found = text
     .replace(/<\/?tool_use_error>/g, '')
-    .replace(/^\s*(fatal|error): /, '')
-    .trim()
-    .slice(0, 200)
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line !== '' && !/^Exit code \d+$/.test(line))
+  const line = found.find(one => /^(fatal|error): /.test(one)) ?? found[0] ?? ''
+
+  return line.replace(/^(fatal|error): /, '').slice(0, 200)
+}
 
 // a heredoc's lines are input to the command, not commands
 const withoutHeredocBodies = (command: string) => {

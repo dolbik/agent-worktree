@@ -21,9 +21,6 @@ const grove = atom(
 const problems = atom({ plugin: 'agent-worktree', key: 'problems' } as const, [], {
   shape: 'problems-1',
 })
-const expanded = atom({ plugin: 'agent-worktree', key: 'expanded' } as const, [], {
-  shape: 'expanded-1',
-})
 
 export async function git($: EngineInterface, cwd: string, ...args: string[]) {
   try {
@@ -115,6 +112,8 @@ async function rowOf($: EngineInterface, one: Listed & { repo: string }, base?: 
   }
 }
 
+let own: { pid: number; startedAt: string } | undefined
+
 // Claude Code locks a worktree it makes with `claude session <name> (pid <its pid> start <its start, UTC>)`
 async function ownProcess($: EngineInterface) {
   try {
@@ -177,10 +176,14 @@ export function complain($: EngineInterface, problem: Problem) {
   return update($, problems, list => [...list, problem].slice(-50))
 }
 
+export async function agentOf($: EngineInterface, agentId?: string) {
+  return agentId === undefined ? undefined : (await $.agent.list()).find(one => one.id === agentId)
+}
+
 export async function agentLabel($: EngineInterface, agentId?: string) {
-  return agentId === undefined
-    ? undefined
-    : ((await $.agent.list()).find(one => one.id === agentId)?.description ?? agentId)
+  const agent = await agentOf($, agentId)
+
+  return agent ? labelOf(agent) : agentId
 }
 
 export async function refresh($: EngineInterface, isFull = false) {
@@ -221,23 +224,30 @@ export async function refresh($: EngineInterface, isFull = false) {
     return paths.find(path => nameOf(path) === `agent-${agentId}`) ?? (agent && agentFolder(agent))
   }
 
-  const fills: Record<string, string> = {}
+  const fills: Record<string, { path: string; agentId: string }> = {}
   const drops = new Set<string>()
-  for (const one of before.filter(entry => entry.path === '' && entry.agentId)) {
-    const agentId = one.agentId as string
-    const path = folderOf(agentId)
-    if (path) fills[one.toolUseId] = path
-    else if (!ACTIVE.includes(agents.find(agent => agent.id === agentId)?.status ?? '')) drops.add(one.toolUseId)
+  const claimed = new Set(before.map(one => one.agentId))
+  for (const one of before.filter(entry => entry.path === '')) {
+    // a foreground agent's id comes only when it returns, so until then it is found by its description
+    const agentId =
+      one.agentId ??
+      agents.find(agent => !claimed.has(agent.id) && ACTIVE.includes(agent.status) && labelOf(agent) === one.label)?.id
+    const path = agentId && folderOf(agentId)
+    if (agentId && path) {
+      fills[one.toolUseId] = { path, agentId }
+      claimed.add(agentId)
+    } else if (one.agentId && !ACTIVE.includes(agents.find(agent => agent.id === one.agentId)?.status ?? ''))
+      drops.add(one.toolUseId)
   }
 
-  const mine = new Set([...before.map(one => one.path), ...Object.values(fills)])
+  const mine = new Set([...before.map(one => one.path), ...Object.values(fills).map(fill => fill.path)])
   const adds: Tracked[] = []
   const add = (entry: Omit<Tracked, 'isRunning' | 'isHere' | 'isRemoved'>) => {
     adds.push({ ...entry, isRunning: false, isHere: false, isRemoved: false })
     mine.add(entry.path)
   }
   const lockedHere = listed.filter(one => !mine.has(one.path) && one.lock && parseLock(one.lock))
-  const own = lockedHere.length > 0 ? await ownProcess($) : undefined
+  if (lockedHere.length > 0) own ??= await ownProcess($)
   for (const one of lockedHere) {
     const lock = parseLock(one.lock as string)
     if (!own || lock?.pid !== own.pid || !sameText(lock.startedAt, own.startedAt)) continue
@@ -271,20 +281,29 @@ export async function refresh($: EngineInterface, isFull = false) {
         ...list
           .filter(one => !drops.has(one.toolUseId))
           .map(one => {
-            const path = fills[one.toolUseId]
+            const fill = fills[one.toolUseId]
 
-            return path ? { ...one, path, branch: branchOf(path) ?? one.branch } : one
+            return fill ? { ...one, ...fill, branch: branchOf(fill.path) ?? one.branch } : one
           }),
         ...adds.filter(entry => !list.some(one => one.path === entry.path)),
       ]),
     )
   }
 
-  const list = (await read($, tracked)).filter(one => one.path && !one.isRemoved)
-  const ownPaths = list.map(one => one.path)
+  const live = (await read($, tracked)).filter(one => one.path && !one.isRemoved)
   const snaps = Object.fromEntries(
-    await Promise.all(ownPaths.map(async path => [path, await snapOf($, path, bases[repoOf[path] ?? ''])] as const)),
+    await Promise.all(
+      live.map(async one => [one.path, await snapOf($, one.path, bases[repoOf[one.path] ?? ''])] as const),
+    ),
   )
+  // Claude Code deletes an agent's worktree when the agent ends with no changes
+  const isDeleted = (one: Tracked) =>
+    one.how === 'agent' &&
+    !!snaps[one.path]?.isGone &&
+    !ACTIVE.includes(agents.find(agent => agent.id === one.agentId)?.status ?? '')
+  const deleted = new Set(live.filter(isDeleted).map(one => one.toolUseId))
+  if (deleted.size > 0) await update($, tracked, list => list.filter(one => !deleted.has(one.toolUseId)))
+  const ownPaths = live.filter(one => !deleted.has(one.toolUseId)).map(one => one.path)
   const badgePaths = [...new Set([...paths, ...ownPaths])]
   const badges: Record<string, AgentBadge> = {}
   for (const agent of [...agents].sort((a, b) => a.startTime - b.startTime)) {

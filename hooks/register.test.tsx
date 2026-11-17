@@ -4,6 +4,8 @@ import type { TestBody } from 'claude-code/testing'
 import { clockOf } from './pane'
 
 type On = Parameters<TestBody>[1]
+
+const later = (globalThis as unknown as { setTimeout: (fn: () => void, ms: number) => void }).setTimeout
 type Dollar = Parameters<TestBody>[0]
 type Wt = { path: string; branch: string; lock?: string }
 type Answers = { status: string; revList: string; shortstat: string; nameStatus: string; log: string; age: string }
@@ -49,6 +51,9 @@ type World = {
   agents: never[]
   per: Record<string, Partial<Answers>>
   pid?: { pid: number; start: string }
+  gone: Set<string>
+  pidReads: number
+  agentLists: number
   sent: string[]
   toasts: string[]
   views: string[]
@@ -56,6 +61,7 @@ type World = {
 }
 
 const gitAnswer = (w: World, argv: readonly string[], dir: string) => {
+  if ([...w.gone].some(path => dir === path || dir.startsWith(`${path}/`))) return undefined
   let best: { repo: string; wt: Wt } | undefined
   for (const [repo, list] of Object.entries(w.repos))
     for (const wt of list)
@@ -81,7 +87,19 @@ const gitAnswer = (w: World, argv: readonly string[], dir: string) => {
 }
 
 const world = (on: On, repos: Record<string, Wt[]>, cwd = '/repo'): World => {
-  const w: World = { repos, cwd, agents: [], per: {}, sent: [], toasts: [], views: [], status: [] }
+  const w: World = {
+    repos,
+    cwd,
+    agents: [],
+    per: {},
+    gone: new Set(),
+    pidReads: 0,
+    agentLists: 0,
+    sent: [],
+    toasts: [],
+    views: [],
+    status: [],
+  }
   on('command.register', () => ({ value: { command: 'worktrees' } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
@@ -104,10 +122,15 @@ const world = (on: On, repos: Record<string, Wt[]>, cwd = '/repo'): World => {
 
     return { value: {} as never }
   })
-  on('agent.list', () => ({ value: w.agents }))
-  on('fs.exists', () => ({ value: true }))
+  on('agent.list', () => {
+    w.agentLists++
+
+    return { value: w.agents }
+  })
+  on('fs.exists', (_, e) => ({ value: !w.gone.has(e.path) }))
   on('process.run', (_, e) => {
     const [command] = e.argv
+    if (command === 'sh') w.pidReads++
     const out =
       command === 'sh'
         ? w.pid && String(w.pid.pid)
@@ -408,6 +431,9 @@ test('the session’s own worktree made before the plugin loaded is found by its
   expect(found).toContain('OTHER WORKTREES  2 in 1 repository')
   expect(found.some(one => one.startsWith('● old'))).toBe(true)
   expect(found.some(one => one.startsWith('● someone'))).toBe(true)
+  const reads = w.pidReads
+  await texts($)
+  expect(w.pidReads).toBe(reads)
 })
 
 test('git worktree add through Bash, by the session or a subagent, in any folder or repository', async ($, on) => {
@@ -415,6 +441,10 @@ test('git worktree add through Bash, by the session or a subagent, in any folder
   w.agents = [agentRow('ag1', 'build feature', '/repo')]
   const made: Record<string, [string, Wt]> = {
     'git worktree add -q ../work/side -b side': ['/repo', { path: '/work/side', branch: 'side' }],
+    'mkdir -p /repo/tmp/build && cd /repo/tmp/build && git worktree add ../../wt-x -b x': [
+      '/repo',
+      { path: '/repo/wt-x', branch: 'x' },
+    ],
     'git worktree add /tmp/y -b y': ['/repo', { path: '/tmp/y', branch: 'y' }],
     'git -C /other worktree add .claude/worktrees/z -b z': [
       '/other',
@@ -424,6 +454,8 @@ test('git worktree add through Bash, by the session or a subagent, in any folder
   on('tool.call', { tool: 'Bash' }, (_, e) => {
     const [repo, wt] = made[e.command] ?? []
     if (repo && wt) w.repos[repo]?.push(wt)
+    if (wt?.branch === 'side') w.repos['/repo']?.push({ path: '/repo/.claude/worktrees/agent-zz', branch: 'agent-zz' })
+    w.gone.delete('/repo/tmp/build')
 
     return { result: { stdout: '', stderr: '', interrupted: false } as never }
   })
@@ -432,10 +464,17 @@ test('git worktree add through Bash, by the session or a subagent, in any folder
   await $.tool.call({ tool: 'Bash', command: 'git worktree add /tmp/y -b y', agentId: 'ag1' } as never)
   await $.tool.call({ tool: 'Bash', command: 'git -C /other worktree add .claude/worktrees/z -b z' })
   await $.tool.call({ tool: 'Bash', command: 'git status' })
+  w.gone.add('/repo/tmp/build')
+  await $.tool.call({
+    tool: 'Bash',
+    command: 'mkdir -p /repo/tmp/build && cd /repo/tmp/build && git worktree add ../../wt-x -b x',
+  })
 
   const found = await texts($)
-  expect(found).toContain('THIS SESSION  3 worktrees')
-  expect(found.filter(one => one === `made by this session at ${AT} · git worktree add`).length).toBe(2)
+  expect(found).toContain('THIS SESSION  4 worktrees')
+  expect(found).toContain('◆ y')
+  expect(found.some(one => one.startsWith('● agent-zz'))).toBe(true)
+  expect(found.filter(one => one === `made by this session at ${AT} · git worktree add`).length).toBe(3)
   expect(found).toContain(`made by subagent «build feature» at ${AT} · git worktree add`)
   expect(found).toContain('other · z  ↑0 ↓0 main · clean · nothing unmerged')
 })
@@ -548,4 +587,51 @@ test('other worktrees are one line each, folded by repository, within the pane w
   await ui.press({ key: 'repo:/other' })
   expect(await rows()).toContain('● spike           spike-cache     ↑0 ↓0 · 1 minute ago')
   await ui.unmount()
+})
+
+test('a foreground agent leaves no card once it ends with nothing to keep', async ($, on) => {
+  const w = world(on, { '/repo': [MAIN] })
+  on('tool.call', { tool: 'Agent' }, async () => {
+    w.repos['/repo']?.push(AGENT_WT)
+    w.agents = [agentRow('ag1', 'fix auth', AGENT_WT.path)]
+    const seen = w.agentLists
+    while (w.agentLists < seen + 3) await new Promise<void>(resolve => later(resolve, 5))
+    w.repos['/repo'] = [MAIN]
+    w.gone.add(AGENT_WT.path)
+    w.agents = []
+
+    return { result: { status: 'completed', agentId: 'ag1' } as never }
+  })
+  await start($)
+  await $.tool.call({ tool: 'Agent', prompt: 'p', description: 'fix auth', isolation: 'worktree' })
+
+  expect(await texts($)).toContain('No worktrees in this session yet.')
+})
+
+test('a background agent’s worktree goes once the agent ends and Claude Code deletes it', async ($, on) => {
+  const w = world(on, { '/repo': [MAIN, AGENT_WT] })
+  on('tool.call', { tool: 'Agent' }, () => ({ result: { status: 'async_launched', agentId: 'ag1' } as never }))
+  w.agents = [agentRow('ag1', 'fix auth', AGENT_WT.path)]
+  await start($)
+  await $.tool.call({ tool: 'Agent', prompt: 'p', description: 'fix auth', isolation: 'worktree' })
+  expect(await texts($)).toContain('THIS SESSION  1 worktree')
+
+  w.agents = [agentRow('ag1', 'fix auth', AGENT_WT.path, 'completed')]
+  w.repos['/repo'] = [MAIN]
+  w.gone.add(AGENT_WT.path)
+  expect(await texts($)).toContain('No worktrees in this session yet.')
+})
+
+test('entering a removed worktree again shows it as here, not removed', async ($, on) => {
+  world(on, { '/repo': [MAIN, WT] })
+  enters(on, WT)
+  on('tool.call', { tool: 'ExitWorktree' }, () => ({
+    result: { action: 'remove', originalCwd: '/repo', worktreePath: WT.path } as never,
+  }))
+  await start($)
+  await $.tool.call({ tool: 'EnterWorktree', name: 'fix-auth' })
+  await $.tool.call({ tool: 'ExitWorktree', action: 'remove' })
+  await $.tool.call({ tool: 'EnterWorktree', name: 'fix-auth' })
+
+  expect(await texts($)).toContain('⎇ fix-auth  ★ here')
 })
