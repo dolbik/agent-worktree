@@ -504,7 +504,7 @@ test('the session’s own worktree made before the plugin loaded is found by its
   const found = await texts($)
   expect(found).toContain('THIS SESSION  1 worktree')
   expect(found).toContain('made by this session · EnterWorktree')
-  expect(found).toContain('OTHER WORKTREES  2 in 1 repository')
+  expect(found).toContain('OTHER WORKTREES IN repo  2 in 1 repository')
   expect(found.some(one => one.startsWith('  ● old'))).toBe(true)
   expect(found.some(one => one.startsWith('  ● someone'))).toBe(true)
   const reads = w.pidReads
@@ -655,7 +655,9 @@ test('other worktrees are one line each, folded by repository, within the pane w
   await ui.press({ key: 'refresh' })
   const lines = async () =>
     (await ui.findAll({ type: 'Text' })).map(one => one.text).filter(one => /^ {2}(● |\S.* · \d+$)|^ {6}\S/.test(one))
-  expect((await ui.findAll({ type: 'Text' })).map(one => one.text)).toContain('OTHER WORKTREES  3 in 2 repositories')
+  expect((await ui.findAll({ type: 'Text' })).map(one => one.text)).toContain(
+    'OTHER WORKTREES IN THESE REPOSITORIES  3 in 2 repositories',
+  )
   expect(await lines()).toEqual([
     '  Needs a look · 2',
     '  ● docs-install…  docs/install…  PR unknown        6 d',

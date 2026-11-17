@@ -39,7 +39,7 @@ THIS SESSION  2 worktrees                                        Refresh
 PROBLEMS IN THIS SESSION  1 failed worktree call
 ✗ 14:05  subagent «fix auth»  add ../tmp-x  invalid reference: .
 
-OTHER WORKTREES  3 in 1 repository
+OTHER WORKTREES IN app  3 in 1 repository
 2 need a look · 1 can be removed
   Needs a look · 2
   ● docs-update  docs/install-steps  no PR              6 d
