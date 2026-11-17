@@ -18,8 +18,10 @@ export const register: Register = on => {
       name: 'worktrees',
       description: "Show this session's git worktrees in a pane",
     })
-    void refresh($, true)
-    $.clock.every(5000, () => void refresh($))
+    // the next run waits for this one, so runs never overlap
+    const loop = (isFull: boolean): void =>
+      void refresh($, isFull).finally(() => $.clock.after(5000, () => loop(false)))
+    loop(true)
 
     return started
   })
@@ -67,7 +69,7 @@ export const register: Register = on => {
         isRemoved: false,
       },
     ])
-    if (isMain) $.ui.status(`⎇ ${branch ?? path.split('/').pop()}`)
+    if (isMain) $.ui.status(`⎇ ${branch ?? nameOf(path)}`)
     await openOnFirst($, wasEmpty)
 
     return ran
@@ -104,7 +106,10 @@ export const register: Register = on => {
       toolUseId: e.tool_use_id,
     })
     await openOnFirst($, wasEmpty)
-    const ran = await next(e)
+    const ran = await next(e).catch(async error => {
+      await update($, tracked, list => list.filter(one => one.toolUseId !== e.tool_use_id))
+      throw error
+    })
     const result = (ran.result ?? {}) as {
       agentId?: string
       worktreePath?: string
@@ -142,6 +147,18 @@ export const register: Register = on => {
     )
 
     return ran
+  })
+
+  // a foreground agent's id is otherwise known only when its call returns
+  on('agent.spawn', async ($, e, next) => {
+    const spawned = await next(e)
+    const agentId = 'agentId' in spawned ? spawned.agentId : undefined
+    if (agentId && (await read($, tracked)).some(one => one.toolUseId === e.tool_use_id && one.path === ''))
+      await update($, tracked, list =>
+        list.map(one => (one.toolUseId === e.tool_use_id && one.path === '' ? { ...one, agentId } : one)),
+      )
+
+    return spawned
   })
 
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {

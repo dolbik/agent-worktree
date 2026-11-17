@@ -103,14 +103,21 @@ const tokenize = (command: string) => {
   return segments
 }
 
-const isDynamic = (word: string) => /[$`]/.test(word)
+const isDynamic = (word: string) => /[$`]/.test(word) || word === '-'
 
-const joinDir = (dir: string | null, path: string) =>
-  dir === null || path.startsWith('/') ? path : `${dir.replace(/\/+$/, '')}/${path}`
+// undefined: a folder the command names through a variable, which cannot be known
+const joinDir = (dir: string | null | undefined, path: string) =>
+  isDynamic(path)
+    ? undefined
+    : /^[/~]/.test(path) || dir === null
+      ? path
+      : dir === undefined
+        ? undefined
+        : `${dir.replace(/\/+$/, '')}/${path}`
 
 export type WorktreeAdd = { dir: string | null; path: string | null }
 
-// dir: where git runs (`-C`, else a leading `cd`), relative to the shell's folder; null when unknown
+// dir: where git runs (`-C`, else a leading `cd`), relative to the shell's folder, null for that folder itself
 export const worktreeAdds = (command: string): WorktreeAdd[] => {
   const found: WorktreeAdd[] = []
   let cdDir: string | null | undefined = null
@@ -119,8 +126,7 @@ export const worktreeAdds = (command: string): WorktreeAdd[] => {
     while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i] ?? '')) i++
     const first = words[i] ?? ''
     if (first === 'cd') {
-      const target = words[i + 1] ?? ''
-      cdDir = cdDir === undefined || isDynamic(target) ? undefined : joinDir(cdDir, target)
+      cdDir = joinDir(cdDir, words[i + 1] ?? '~')
       continue
     }
     if (first !== 'git' && !first.endsWith('/git')) continue
@@ -128,8 +134,7 @@ export const worktreeAdds = (command: string): WorktreeAdd[] => {
     for (i++; i < words.length && words[i] !== 'worktree'; i++) {
       const word = words[i] ?? ''
       if (word === '-C') {
-        const target = words[++i] ?? ''
-        dir = dir === undefined || isDynamic(target) ? undefined : joinDir(dir, target)
+        dir = joinDir(dir, words[++i] ?? '')
       } else if (word === '-c') i++
       else if (!word.startsWith('-')) break
     }
@@ -141,7 +146,7 @@ export const worktreeAdds = (command: string): WorktreeAdd[] => {
       else if (word === '--') path ??= words[++i]
       else if (!word.startsWith('-')) path ??= word
     }
-    found.push({ dir: dir ?? null, path: path !== undefined && !isDynamic(path) ? path : null })
+    if (dir !== undefined) found.push({ dir, path: path !== undefined && !isDynamic(path) ? path : null })
   }
 
   return found

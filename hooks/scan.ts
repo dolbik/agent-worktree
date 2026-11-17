@@ -35,6 +35,8 @@ export async function git($: EngineInterface, cwd: string, ...args: string[]) {
 
 const lines = (text?: string) => (text ? text.split('\n') : [])
 export const nameOf = (path: string) => path.split('/').pop() || path
+
+export const liveTracked = (list: Tracked[]) => list.filter(one => one.path && !one.isRemoved)
 export const labelOf = (agent: AgentInfo) => agent.description || agent.label
 
 export async function listAt($: EngineInterface, dir: string) {
@@ -193,11 +195,7 @@ export async function refresh($: EngineInterface, isFull = false) {
   const agents = await $.agent.list()
 
   const lists = new Map<string, Listed[]>()
-  const seeds = [
-    sessionDir,
-    ...before.filter(one => one.path && !one.isRemoved).map(one => one.path),
-    ...agents.map(one => one.cwd),
-  ]
+  const seeds = [sessionDir, ...liveTracked(before).map(one => one.path), ...agents.map(one => one.cwd)]
   for (const seed of seeds) {
     if ([...lists.values()].some(list => list.some(one => isInside(seed, one.path)))) continue
     const list = await listAt($, seed)
@@ -224,23 +222,17 @@ export async function refresh($: EngineInterface, isFull = false) {
     return paths.find(path => nameOf(path) === `agent-${agentId}`) ?? (agent && agentFolder(agent))
   }
 
-  const fills: Record<string, { path: string; agentId: string }> = {}
+  const fills: Record<string, string> = {}
   const drops = new Set<string>()
-  const claimed = new Set(before.map(one => one.agentId))
-  for (const one of before.filter(entry => entry.path === '')) {
-    // a foreground agent's id comes only when it returns, so until then it is found by its description
-    const agentId =
-      one.agentId ??
-      agents.find(agent => !claimed.has(agent.id) && ACTIVE.includes(agent.status) && labelOf(agent) === one.label)?.id
-    const path = agentId && folderOf(agentId)
-    if (agentId && path) {
-      fills[one.toolUseId] = { path, agentId }
-      claimed.add(agentId)
-    } else if (one.agentId && !ACTIVE.includes(agents.find(agent => agent.id === one.agentId)?.status ?? ''))
+  for (const one of before.filter(entry => entry.path === '' && entry.agentId)) {
+    const agentId = one.agentId as string
+    const path = folderOf(agentId)
+    if (path) fills[one.toolUseId] = path
+    else if (!one.isRunning && !ACTIVE.includes(agents.find(agent => agent.id === agentId)?.status ?? ''))
       drops.add(one.toolUseId)
   }
 
-  const mine = new Set([...before.map(one => one.path), ...Object.values(fills).map(fill => fill.path)])
+  const mine = new Set([...before.map(one => one.path), ...Object.values(fills)])
   const adds: Tracked[] = []
   const add = (entry: Omit<Tracked, 'isRunning' | 'isHere' | 'isRemoved'>) => {
     adds.push({ ...entry, isRunning: false, isHere: false, isRemoved: false })
@@ -281,16 +273,16 @@ export async function refresh($: EngineInterface, isFull = false) {
         ...list
           .filter(one => !drops.has(one.toolUseId))
           .map(one => {
-            const fill = fills[one.toolUseId]
+            const path = fills[one.toolUseId]
 
-            return fill ? { ...one, ...fill, branch: branchOf(fill.path) ?? one.branch } : one
+            return path ? { ...one, path, branch: branchOf(path) ?? one.branch } : one
           }),
         ...adds.filter(entry => !list.some(one => one.path === entry.path)),
       ]),
     )
   }
 
-  const live = (await read($, tracked)).filter(one => one.path && !one.isRemoved)
+  const live = liveTracked(await read($, tracked))
   const snaps = Object.fromEntries(
     await Promise.all(
       live.map(async one => [one.path, await snapOf($, one.path, bases[repoOf[one.path] ?? ''])] as const),

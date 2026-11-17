@@ -10,6 +10,9 @@ test('worktreeAdds finds the folder git runs in and the path word', async () => 
   expect(worktreeAdds('cd sub && git worktree add -b x ../x main')).toEqual([{ dir: 'sub', path: '../x' }])
   expect(worktreeAdds('git worktree add -- "my tree"')).toEqual([{ dir: null, path: 'my tree' }])
   expect(worktreeAdds('git worktree add "$DIR"')).toEqual([{ dir: null, path: null }])
+  expect(worktreeAdds('cd "$REPO" && git worktree add ../wt')).toEqual([])
+  expect(worktreeAdds('cd /tmp && cd ~/repo && git worktree add x')).toEqual([{ dir: '~/repo', path: 'x' }])
+  expect(worktreeAdds('cd "$REPO" && cd /abs && git worktree add x')).toEqual([{ dir: '/abs', path: 'x' }])
   expect(worktreeAdds('git worktree list && git status')).toEqual([])
 })
 

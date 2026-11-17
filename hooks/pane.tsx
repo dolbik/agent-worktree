@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { ElementTable, EngineInterface } from 'claude-code'
 
 import type { Problem, Row, Snap, Tracked } from '../types'
-import { ACTIVE, PANE, nameOf, refresh } from './scan'
+import { ACTIVE, PANE, liveTracked, nameOf, refresh } from './scan'
 
 const tracked = atom({ plugin: 'agent-worktree', key: 'tracked' } as const, [], { shape: 'tracked-2' })
 const grove = atom(
@@ -21,8 +21,6 @@ const PROBLEMS_SHOWN = 5
 export function openPane($: EngineInterface) {
   return $.ui.open({ id: PANE, title: 'Worktrees' })
 }
-
-export const liveTracked = (list: Tracked[]) => list.filter(one => one.path && !one.isRemoved)
 
 const isAgentMade = (one: Tracked) => one.agentId !== undefined || one.how === 'agent'
 

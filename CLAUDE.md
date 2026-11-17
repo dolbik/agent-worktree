@@ -9,18 +9,18 @@ Claude Code mod (function-hook plugin): a pane listing the git worktrees the cur
   match a worktree's lock to this session's process; and `$.agent.list()`. Never add a git mutation, tmux call, or
   worktree switch/remove. Actions are prompts sent with `$.prompt.submit` or `$.ui.view`; Claude does the work.
 - Every prompt ends with the `READ_ONLY` sentence in `hooks/pane.tsx`.
-- State lives in `$.state` atoms (`tracked`, `grove`, `problems`, `expanded`), declared in `types/index.d.ts`. Each
-  file that reads an atom declares it itself (the engine requires it); change a stored value's fields, bump its
-  `shape` tag in every file.
+- State the pane draws lives in `$.state` atoms (`tracked`, `grove`, `problems`, `expanded`), declared in
+  `types/index.d.ts`. Each file that reads an atom declares it itself (the engine requires it); change a stored
+  value's fields, bump its `shape` tag in every file.
 - A function that takes `$` from another file is a `function` declaration, not an arrow (the engine requires it).
 - No DOM, no Node: reach the host through `$` (`$.process.run`, `$.fs`, `$.clock`).
 
 ## Layout
 
 - `hooks/register.tsx`: `tool.call` hooks record worktrees when they are made, in the main loop or a subagent's
-  (`e.agentId`): `EnterWorktree`, `Agent` (`isolation: "worktree"`, a background agent's folder found by its
-  `agentId`), and Bash `git worktree add` (worktree list before and after the call); failed calls go to `problems`;
-  `/worktrees` opens the pane.
+  (`e.agentId`): `EnterWorktree`, `Agent` (`isolation: "worktree"`, its folder found by the `agentId` that
+  `agent.spawn` gives the call), and Bash `git worktree add` (worktree list before and after the call); failed calls
+  go to `problems`; `/worktrees` opens the pane.
 - `hooks/scan.ts`: `refresh` (every 5 s from `session.start`) lists the worktrees of every repository the session
   touches, matches locks to this session's process, claims worktrees its agents work in (innermost folder wins),
   snapshots this session's worktrees, reads other worktrees once a minute, toasts finished agents.

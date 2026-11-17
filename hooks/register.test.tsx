@@ -5,7 +5,6 @@ import { clockOf } from './pane'
 
 type On = Parameters<TestBody>[1]
 
-const later = (globalThis as unknown as { setTimeout: (fn: () => void, ms: number) => void }).setTimeout
 type Dollar = Parameters<TestBody>[0]
 type Wt = { path: string; branch: string; lock?: string }
 type Answers = { status: string; revList: string; shortstat: string; nameStatus: string; log: string; age: string }
@@ -53,7 +52,6 @@ type World = {
   pid?: { pid: number; start: string }
   gone: Set<string>
   pidReads: number
-  agentLists: number
   sent: string[]
   toasts: string[]
   views: string[]
@@ -94,7 +92,6 @@ const world = (on: On, repos: Record<string, Wt[]>, cwd = '/repo'): World => {
     per: {},
     gone: new Set(),
     pidReads: 0,
-    agentLists: 0,
     sent: [],
     toasts: [],
     views: [],
@@ -105,7 +102,7 @@ const world = (on: On, repos: Record<string, Wt[]>, cwd = '/repo'): World => {
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.cwd', () => ({ value: w.cwd }))
   on('env.get', () => ({ value: '/home/u' }))
-  on('clock.every', () => ({ value: undefined }))
+  on('clock.after', () => new Promise<never>(() => {}))
   on('clock.now', () => ({ value: NOW }))
   on('ui.status', (_, e) => {
     w.status.push(e.text)
@@ -122,11 +119,7 @@ const world = (on: On, repos: Record<string, Wt[]>, cwd = '/repo'): World => {
 
     return { value: {} as never }
   })
-  on('agent.list', () => {
-    w.agentLists++
-
-    return { value: w.agents }
-  })
+  on('agent.list', () => ({ value: w.agents }))
   on('fs.exists', (_, e) => ({ value: !w.gone.has(e.path) }))
   on('process.run', (_, e) => {
     const [command] = e.argv
@@ -591,11 +584,12 @@ test('other worktrees are one line each, folded by repository, within the pane w
 
 test('a foreground agent leaves no card once it ends with nothing to keep', async ($, on) => {
   const w = world(on, { '/repo': [MAIN] })
-  on('tool.call', { tool: 'Agent' }, async () => {
+  on('agent.spawn', () => ({ model: 'opus', agentId: 'ag1' }))
+  on('tool.call', { tool: 'Agent' }, async (_, e) => {
+    await $.agent.spawn({ tool_use_id: e.tool_use_id, prompt: 'p', description: 'fix auth' } as never)
     w.repos['/repo']?.push(AGENT_WT)
     w.agents = [agentRow('ag1', 'fix auth', AGENT_WT.path)]
-    const seen = w.agentLists
-    while (w.agentLists < seen + 3) await new Promise<void>(resolve => later(resolve, 5))
+    await $.command.run({ command: 'worktrees' } as never)
     w.repos['/repo'] = [MAIN]
     w.gone.add(AGENT_WT.path)
     w.agents = []
@@ -634,4 +628,17 @@ test('entering a removed worktree again shows it as here, not removed', async ($
   await $.tool.call({ tool: 'EnterWorktree', name: 'fix-auth' })
 
   expect(await texts($)).toContain('⎇ fix-auth  ★ here')
+})
+
+test('an Agent call that fails part way leaves no card behind', async ($, on) => {
+  world(on, { '/repo': [MAIN] })
+  on('tool.call', { tool: 'Agent' }, () => {
+    throw new Error('interrupted')
+  })
+  await start($)
+  await $.tool
+    .call({ tool: 'Agent', prompt: 'p', description: 'fix auth', isolation: 'worktree' })
+    .catch(() => undefined)
+
+  expect(await texts($)).toContain('No worktrees in this session yet.')
 })
