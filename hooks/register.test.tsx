@@ -177,7 +177,7 @@ test('agent and ExitWorktree badges', async ($, on) => {
   await $.tool.call({ tool: 'ExitWorktree', action: 'remove' })
 
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  const agent = await ui.find({ type: 'Text', text: /⎇ agent-1/ })
+  const agent = await ui.find({ type: 'Text', text: /◆ agent-1/ })
   expect(agent?.text).toContain('agent "fix auth"')
   expect(agent?.text).not.toContain('running')
   const exited = await ui.find({ type: 'Text', text: /⎇ fix-auth/ })
@@ -196,7 +196,7 @@ test('a background agent gets its worktree, live badge, View, and a done toast',
 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   await ui.press({ key: 'refresh' })
-  expect((await ui.find({ type: 'Text', text: /⎇ agent-1/ }))?.text).toContain('agent "fix auth"')
+  expect((await ui.find({ type: 'Text', text: /◆ agent-1/ }))?.text).toContain('agent "fix auth"')
   expect((await ui.find({ type: 'Text', text: /●/ }))?.text).toBe('● running · opus · 45k tok · 3m ▁▄█')
   expect(await ui.find({ type: 'Text', text: /Other Claude worktrees/ })).toBeUndefined()
   await ui.press({ key: `${AGENT_WT}:view` })
@@ -294,4 +294,36 @@ test('the diff bar scales each card against the largest diff', async ($, on) => 
   expect((await ui.find({ type: 'Text', text: /\+4 −0/ }))?.text).toBe(`${'█'.repeat(24)} +4 −0 · 1 files`)
   expect((await ui.find({ type: 'Text', text: /^█{6}$/ }))?.text).toBe('█'.repeat(6))
   await ui.unmount()
+})
+
+test('worktrees of agents and nested subagents no hook saw get their own marked section', async ($, on) => {
+  const NESTED = '/elsewhere/scan-callers'
+  const seen = engine(on, repoGit([AGENT_WT, NESTED]))
+  seen.agents.rows = [
+    { ...(agentRow('running') as object), type: 'general-purpose', description: 'plan auth', label: 'plan auth' },
+    {
+      ...(agentRow('running') as object),
+      id: 'ag2',
+      type: 'Explore',
+      parentId: 'ag1',
+      description: 'scan callers',
+      label: 'scan callers',
+      cwd: NESTED,
+    },
+  ] as never[]
+  await start($)
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await ui.press({ key: 'refresh' })
+  expect(await ui.find({ type: 'Text', text: /◆ Agent worktrees/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Other Claude worktrees/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /No worktrees/ })).toBeUndefined()
+  expect((await ui.find({ type: 'Text', text: /◆ agent-1/ }))?.text).toBe('◆ agent-1 [general-purpose] agent')
+  expect((await ui.find({ type: 'Text', text: /◆ scan-callers/ }))?.text).toBe('◆ scan-callers [Explore] subagent')
+  expect((await ui.find({ type: 'Text', text: /^session/ }))?.text).toBe('session ▸ "plan auth" ▸ ◆ "scan callers"')
+  await ui.unmount()
+
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect((await band.find({ type: 'Text', text: /worktrees/ }))?.text).toMatch(/^⎇ 2 worktrees \(◆ 2 agent\) · /)
+  await band.unmount()
 })

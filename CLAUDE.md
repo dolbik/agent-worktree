@@ -15,7 +15,7 @@ Claude Code mod (function-hook plugin): a pane listing the current session's git
 ## Layout
 
 - `hooks/register.tsx`: `tool.call` hooks on `EnterWorktree`, `ExitWorktree`, `Agent`
-  (`isolation: "worktree"`) track worktrees; `refresh` (every 5 s from `session.start`) reads git and `$.agent.list()`, fills background agents, toasts finished ones; `ui.render` on `Pane` draws cards, on `AbovePrompt` the summary band;
+  (`isolation: "worktree"`) track worktrees; `refresh` (every 5 s from `session.start`) reads git and `$.agent.list()`, fills background agents, claims any worktree an agent or nested subagent works in (`spawned`), toasts finished ones; `ui.render` on `Pane` draws cards, on `AbovePrompt` the summary band;
   `/worktrees` opens the pane.
 - `hooks/register.test.tsx`: tests; each hook in a test stands for the engine.
 - `.claude-plugin/types/`: written by Claude Code on load, not edited, not committed.

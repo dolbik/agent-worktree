@@ -27,6 +27,8 @@ export type Snap = {
 export type AgentBadge = {
   id: string
   label: string
+  type: string
+  lineage: string[]
   status: string
   model?: string
   tokenCount: number
@@ -37,6 +39,7 @@ export type AgentBadge = {
 export type Grove = {
   repo?: string
   base?: string
+  spawned: string[]
   others: string[]
   snaps: Record<string, Snap>
   agents: Record<string, AgentBadge>

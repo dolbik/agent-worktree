@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { AgentInfo, EngineInterface, Register } from 'claude-code'
 
-import type { AgentBadge, FileChange, Snap } from '../types'
+import type { AgentBadge, FileChange, Snap, Tracked } from '../types'
 
 const PANE = 'agent-worktree'
 const TITLE = 'Worktrees'
@@ -15,8 +15,8 @@ const tracked = atom({ plugin: 'agent-worktree', key: 'tracked' } as const, [], 
 })
 const grove = atom(
   { plugin: 'agent-worktree', key: 'grove' } as const,
-  { others: [], snaps: {}, agents: {} },
-  { shape: 'grove-3' },
+  { spawned: [], others: [], snaps: {}, agents: {} },
+  { shape: 'grove-4' },
 )
 const expanded = atom({ plugin: 'agent-worktree', key: 'expanded' } as const, [], {
   shape: 'expanded-1',
@@ -75,9 +75,25 @@ const snapOf = async ($: EngineInterface, path: string, base?: string): Promise<
 
 const isInside = (cwd: string, path: string) => cwd === path || cwd.startsWith(`${path}/`)
 
-const badgeOf = (agent: AgentInfo): AgentBadge => ({
+const labelOf = (agent: AgentInfo) => agent.description || agent.label
+
+const lineageOf = (agent: AgentInfo, agents: AgentInfo[]) => {
+  const chain: string[] = []
+  // the cap guards against a parentId cycle
+  for (let up = agents.find(one => one.id === agent.parentId); up && chain.length < 8; ) {
+    chain.unshift(labelOf(up))
+    const parentId = up.parentId
+    up = agents.find(one => one.id === parentId)
+  }
+
+  return chain
+}
+
+const badgeOf = (agent: AgentInfo, agents: AgentInfo[]): AgentBadge => ({
   id: agent.id,
-  label: agent.description || agent.label,
+  label: labelOf(agent),
+  type: agent.type,
+  lineage: lineageOf(agent, agents),
   status: agent.status,
   model: agent.model,
   tokenCount: agent.tokenCount,
@@ -99,7 +115,7 @@ const refresh = async ($: EngineInterface) => {
 
   // a background agent's call answers before its worktree exists: place it by its agent row's cwd
   const pathFor = (label?: string) => {
-    const agent = agents.find(one => (one.description || one.label) === label)
+    const agent = agents.find(one => labelOf(one) === label)
 
     return agent && worktrees.find(path => isInside(agent.cwd, path))
   }
@@ -111,8 +127,14 @@ const refresh = async ($: EngineInterface) => {
 
   const list = await read($, tracked)
   const mine = new Set(list.map(one => one.path))
-  const others = worktrees.filter(path => path.includes('/.claude/worktrees/') && !mine.has(path))
-  const paths = [...list.map(one => one.path).filter(Boolean), ...others]
+  // an agent working inside a worktree makes it this session's, whichever loop created it
+  const spawned = worktrees.filter(
+    path => !mine.has(path) && !isInside(cwd, path) && agents.some(one => isInside(one.cwd, path)),
+  )
+  const others = worktrees.filter(
+    path => path.includes('/.claude/worktrees/') && !mine.has(path) && !spawned.includes(path),
+  )
+  const paths = [...list.map(one => one.path).filter(Boolean), ...spawned, ...others]
   const snaps = Object.fromEntries(
     await Promise.all(paths.map(async path => [path, await snapOf($, path, main?.branch)] as const)),
   )
@@ -121,7 +143,7 @@ const refresh = async ($: EngineInterface) => {
     const agent = agents
       .filter(one => isInside(one.cwd, path))
       .sort((a, b) => b.startTime - a.startTime)[0]
-    if (agent) badges[path] = badgeOf(agent)
+    if (agent) badges[path] = badgeOf(agent, agents)
   }
 
   const previous = (await read($, grove)).agents
@@ -136,6 +158,7 @@ const refresh = async ($: EngineInterface) => {
   await update($, grove, () => ({
     repo: main?.path.split('/').pop() || undefined,
     base: main?.branch,
+    spawned,
     others,
     snaps,
     agents: badges,
@@ -197,8 +220,11 @@ const sparkOf = (samples: number[]) => {
 const tokensOf = (n: number) =>
   n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`
 
-const livePaths = (list: { path: string; isRemoved: boolean }[], others: string[]) => [
-  ...list.filter(one => one.path && !one.isRemoved).map(one => one.path),
+const liveTracked = (list: Tracked[]) => list.filter(one => one.path && !one.isRemoved)
+
+const livePaths = (list: Tracked[], spawned: string[], others: string[]) => [
+  ...liveTracked(list).map(one => one.path),
+  ...spawned,
   ...others,
 ]
 
@@ -310,9 +336,10 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const list = await read($, tracked)
-    const { others, snaps, agents } = await read($, grove)
-    const paths = livePaths(list, others)
+    const { spawned, others, snaps, agents } = await read($, grove)
+    const paths = livePaths(list, spawned, others)
     if (e.props.hasSurvey || paths.length === 0) return next(e)
+    const byAgents = spawned.length + liveTracked(list).filter(one => one.source === 'agent').length
 
     const { Box, Text, Button } = $.ui.resolve(e)
     const overlaps = overlapsOf(snaps, paths)
@@ -328,6 +355,7 @@ export const register: Register = on => {
           <Text color="claude">
             ⎇ {paths.length} worktree{paths.length === 1 ? '' : 's'}
           </Text>
+          {byAgents > 0 && <Text color="suggestion"> (◆ {byAgents} agent)</Text>}
           <Text dimColor> · </Text>
           {count(paths.filter(path => (snaps[path]?.dirty ?? 0) > 0).length, 'dirty', 'warning')}
           <Text dimColor> · </Text>
@@ -345,10 +373,11 @@ export const register: Register = on => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Button } = $.ui.resolve(e)
     const list = await read($, tracked)
-    const { repo, base, others, snaps, agents } = await read($, grove)
+    const { repo, base, spawned, others, snaps, agents } = await read($, grove)
     const open = await read($, expanded)
     const now = await $.clock.now()
-    const overlaps = overlapsOf(snaps, livePaths(list, others))
+    const overlaps = overlapsOf(snaps, livePaths(list, spawned, others))
+    const treeKey = (path: string) => [...(agents[path]?.lineage ?? []), agents[path]?.label ?? path].join('\0')
     const isNarrow = e.props.bodyColumns < 60
     const scale = Math.max(1, ...Object.values(snaps).map(snap => (diffOf(snap)?.add ?? 0) + (diffOf(snap)?.del ?? 0)))
     const ask = (text: string) => () => void $.prompt.submit({ text })
@@ -358,11 +387,19 @@ export const register: Register = on => {
     const fileColor = (status: string) =>
       status === 'A' ? 'success' : status === 'D' ? 'error' : status === '??' ? undefined : 'warning'
 
-    const card = (key: string, path: string, title: string, badges: (string | undefined)[], tone: 'here' | 'plain' | 'dim') => {
+    const card = (
+      key: string,
+      path: string,
+      title: string,
+      badges: (string | undefined)[],
+      tone: 'here' | 'agent' | 'plain' | 'dim',
+    ) => {
       const snap = snaps[path]
       const agent = agents[path]
       const isActive = !!agent && ACTIVE.includes(agent.status)
       const isDim = tone === 'dim'
+      const isAgent = tone === 'agent'
+      const lineage = agent?.lineage ?? []
       const branch = snap?.branch ?? nameOf(path)
       const files = snap?.files ?? []
       const diff = diffOf(snap)
@@ -377,13 +414,22 @@ export const register: Register = on => {
           key={key}
           flexDirection="column"
           borderStyle="round"
-          borderColor={tone === 'here' ? 'claude' : isActive ? 'success' : 'subtle'}
+          borderColor={tone === 'here' ? 'claude' : isActive ? 'success' : isAgent ? 'suggestion' : 'subtle'}
           borderDimColor={isDim}
           paddingX={1}
+          marginLeft={isAgent ? 2 * Math.min(lineage.length, 4) : 0}
         >
           <Text bold={!isDim} dimColor={isDim}>
-            ⎇ {title} <Text dimColor>{badge}</Text>
+            {isAgent ? <Text color="suggestion">◆</Text> : '⎇'} {title}{' '}
+            {isAgent && agent?.type && <Text color="permission">[{agent.type}] </Text>}
+            <Text dimColor>{badge}</Text>
           </Text>
+          {isAgent && agent && lineage.length > 0 && (
+            <Text dimColor>
+              session ▸ {lineage.map(label => `"${label}" ▸ `).join('')}
+              <Text color="suggestion">◆ "{agent.label}"</Text>
+            </Text>
+          )}
           {!snap && <Text dimColor>scanning…</Text>}
           {snap?.isGone && <Text color="error">gone from disk</Text>}
           {snap && !snap.isGone && (
@@ -481,7 +527,7 @@ export const register: Register = on => {
             Refresh
           </Button>
         </Box>
-        {list.length === 0 && <Text dimColor>No worktrees in this session yet.</Text>}
+        {list.length === 0 && spawned.length === 0 && <Text dimColor>No worktrees in this session yet.</Text>}
         {list.map(one =>
           card(
             one.toolUseId,
@@ -493,9 +539,19 @@ export const register: Register = on => {
               one.isRunning ? 'running' : undefined,
               one.isRemoved ? 'removed' : undefined,
             ],
-            one.isRemoved ? 'dim' : one.isHere ? 'here' : 'plain',
+            one.isRemoved ? 'dim' : one.isHere ? 'here' : one.source === 'agent' ? 'agent' : 'plain',
           ),
         )}
+        {spawned.length > 0 && (
+          <Text bold color="suggestion">
+            ◆ Agent worktrees
+          </Text>
+        )}
+        {[...spawned]
+          .sort((a, b) => treeKey(a).localeCompare(treeKey(b)))
+          .map(path =>
+            card(path, path, nameOf(path), [agents[path]?.lineage.length ? 'subagent' : 'agent'], 'agent'),
+          )}
         {others.length > 0 && <Text dimColor>Other Claude worktrees</Text>}
         {others.map(path => card(path, path, nameOf(path), ['not from this session'], 'dim'))}
       </Box>
