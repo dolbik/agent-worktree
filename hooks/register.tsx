@@ -3,7 +3,19 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import { firstLine, resolvePath, worktreeAdds } from './detect'
 import { drawBand, drawPane, openPane } from './pane'
-import { PANE, agentLabel, agentOf, complain, labelOf, listAt, nameOf, refresh, remember, withoutGuesses } from './scan'
+import {
+  PANE,
+  agentLabel,
+  agentOf,
+  complain,
+  isGuess,
+  labelOf,
+  listAt,
+  nameOf,
+  refresh,
+  remember,
+  withoutGuesses,
+} from './scan'
 
 const tracked = atom({ plugin: 'agent-worktree', key: 'tracked' } as const, [], { shape: 'tracked-2' })
 
@@ -18,7 +30,7 @@ export const register: Register = on => {
       name: 'worktrees',
       description: "Show this session's git worktrees in a pane",
     })
-    // the next run waits for this one, so runs never overlap
+    // the next run is set only when this one ends, so slow runs do not pile up
     const loop = (isFull: boolean): void =>
       void refresh($, isFull).finally(() => $.clock.after(5000, () => loop(false)))
     loop(true)
@@ -54,7 +66,7 @@ export const register: Register = on => {
     await update($, tracked, list => [
       ...list.filter(one => one.path !== path).map(one => (isMain ? { ...one, isHere: false } : one)),
       {
-        ...(list.find(one => one.path === path) ?? {
+        ...(list.find(one => one.path === path && !isGuess(one)) ?? {
           how: e.path ? ('entered' as const) : ('enter' as const),
           agentId: e.agentId,
           label,

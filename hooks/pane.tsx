@@ -118,7 +118,7 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
   )
   const scale = Math.max(
     1,
-    ...live.map(one => (diffOf(snaps[one.path])?.add ?? 0) + (diffOf(snaps[one.path])?.del ?? 0)),
+    ...live.map(one => diffOf(snaps[one.path])).map(diff => (diff?.add ?? 0) + (diff?.del ?? 0)),
   )
   const repos = [...new Set([...live.map(one => repoOf[one.path]), ...others.map(row => row.repo)].filter(Boolean))]
   const ask = (text: string) => () => void $.prompt.submit({ text })

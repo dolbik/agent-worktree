@@ -52,6 +52,7 @@ type World = {
   pid?: { pid: number; start: string }
   gone: Set<string>
   pidReads: number
+  gitDirs: string[]
   sent: string[]
   toasts: string[]
   views: string[]
@@ -92,6 +93,7 @@ const world = (on: On, repos: Record<string, Wt[]>, cwd = '/repo'): World => {
     per: {},
     gone: new Set(),
     pidReads: 0,
+    gitDirs: [],
     sent: [],
     toasts: [],
     views: [],
@@ -124,6 +126,7 @@ const world = (on: On, repos: Record<string, Wt[]>, cwd = '/repo'): World => {
   on('process.run', (_, e) => {
     const [command] = e.argv
     if (command === 'sh') w.pidReads++
+    if (command === 'git') w.gitDirs.push(e.init?.cwd ?? w.cwd)
     const out =
       command === 'sh'
         ? w.pid && String(w.pid.pid)
@@ -283,7 +286,7 @@ test('a background agent gets its worktree by id, live badge, View, and a done t
   await ui.press({ key: 'refresh' })
   expect(w.toasts).toEqual([])
   w.agents = [agentRow('ag1', 'fix auth', AGENT_WT.path, 'completed')]
-  await ui.press({ key: 'refresh' })
+  await Promise.all([ui.press({ key: 'refresh' }), $.command.run({ command: 'worktrees' } as never)])
   expect(w.toasts).toEqual(['agent "fix auth" done: ↑1 · 2 files'])
   w.agents = [agentRow('ag1', 'fix auth', AGENT_WT.path, 'completed', { tokenCount: 1_234_567 })]
   await ui.press({ key: 'refresh' })
@@ -641,4 +644,53 @@ test('an Agent call that fails part way leaves no card behind', async ($, on) =>
     .catch(() => undefined)
 
   expect(await texts($)).toContain('No worktrees in this session yet.')
+})
+
+test('entering a worktree the refresh found by its lock says who entered it and when', async ($, on) => {
+  const BUILD = {
+    path: '/repo/.claude/worktrees/build',
+    branch: 'worktree-build',
+    lock: 'claude session build (pid 4242 start Tue Nov 17 07:25:46 2026)',
+  }
+  const w = world(on, { '/repo': [MAIN, BUILD] })
+  w.pid = { pid: 4242, start: 'Tue Nov 17 07:25:46 2026' }
+  enters(on, BUILD)
+  await start($)
+  expect(await texts($)).toContain('made by this session · EnterWorktree')
+  await $.tool.call({ tool: 'EnterWorktree', path: BUILD.path } as never)
+
+  expect(await texts($)).toContain(`entered by this session at ${AT} · EnterWorktree`)
+})
+
+test('a worktree made again where a removed one was shows as live', async ($, on) => {
+  const w = world(on, { '/repo': [MAIN, WT] })
+  enters(on, WT)
+  on('tool.call', { tool: 'ExitWorktree' }, () => {
+    w.repos['/repo'] = [MAIN]
+
+    return { result: { action: 'remove', originalCwd: '/repo', worktreePath: WT.path } as never }
+  })
+  on('tool.call', { tool: 'Bash' }, () => {
+    w.repos['/repo']?.push(WT)
+
+    return { result: { stdout: '', stderr: '', interrupted: false } as never }
+  })
+  await start($)
+  await $.tool.call({ tool: 'EnterWorktree', name: 'fix-auth' })
+  await $.tool.call({ tool: 'ExitWorktree', action: 'remove' })
+  await $.tool.call({ tool: 'Bash', command: 'git worktree add .claude/worktrees/fix-auth' })
+
+  const found = await texts($)
+  expect(found).toContain('⎇ fix-auth')
+  expect(found).toContain(`made by this session at ${AT} · git worktree add`)
+})
+
+test('a finished agent outside any repository costs no git run on each refresh', async ($, on) => {
+  const w = world(on, { '/repo': [MAIN] })
+  w.agents = [agentRow('ag1', 'scratch work', '/scratch', 'completed')]
+  await start($)
+  await texts($)
+  await texts($)
+
+  expect(w.gitDirs.filter(dir => dir === '/scratch')).toEqual([])
 })

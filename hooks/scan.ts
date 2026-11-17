@@ -157,7 +157,7 @@ const badgeOf = (agent: AgentInfo, agents: AgentInfo[]): AgentBadge => ({
   startTime: agent.startTime,
 })
 
-const isGuess = (one: Tracked) => one.toolUseId.startsWith('seen:') || one.toolUseId.startsWith('lock:')
+export const isGuess = (one: Tracked) => one.toolUseId.startsWith('seen:') || one.toolUseId.startsWith('lock:')
 
 // what a tool call recorded wins over what a refresh guessed for the same folder
 export const withoutGuesses = (list: Tracked[]) => {
@@ -168,9 +168,9 @@ export const withoutGuesses = (list: Tracked[]) => {
 
 export function remember($: EngineInterface, entry: Tracked) {
   return update($, tracked, list =>
-    entry.path !== '' && list.some(one => one.path === entry.path && !isGuess(one))
+    entry.path !== '' && list.some(one => one.path === entry.path && !isGuess(one) && !one.isRemoved)
       ? list
-      : withoutGuesses([...list, entry]),
+      : withoutGuesses([...list.filter(one => one.path !== entry.path || !one.isRemoved), entry]),
   )
 }
 
@@ -188,14 +188,27 @@ export async function agentLabel($: EngineInterface, agentId?: string) {
   return agent ? labelOf(agent) : agentId
 }
 
-export async function refresh($: EngineInterface, isFull = false) {
+let queue: Promise<void> = Promise.resolve()
+
+// one run at a time, so two runs never both see an agent finish and both toast
+export function refresh($: EngineInterface, isFull = false) {
+  queue = queue.catch(() => undefined).then(() => refreshNow($, isFull))
+
+  return queue
+}
+
+async function refreshNow($: EngineInterface, isFull: boolean) {
   const now = await $.clock.now()
   const before = await read($, tracked)
   const sessionDir = before.find(one => one.isHere)?.path ?? (await $.session.cwd())
   const agents = await $.agent.list()
 
   const lists = new Map<string, Listed[]>()
-  const seeds = [sessionDir, ...liveTracked(before).map(one => one.path), ...agents.map(one => one.cwd)]
+  const seeds = [
+    sessionDir,
+    ...liveTracked(before).map(one => one.path),
+    ...agents.filter(one => ACTIVE.includes(one.status)).map(one => one.cwd),
+  ]
   for (const seed of seeds) {
     if ([...lists.values()].some(list => list.some(one => isInside(seed, one.path)))) continue
     const list = await listAt($, seed)
