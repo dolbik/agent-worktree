@@ -6,6 +6,7 @@ import {
   branchesIn,
   branchesMade,
   isMadeLine,
+  keptLines,
   madeIn,
   parseLock,
   parseWorktreeList,
@@ -125,7 +126,7 @@ test('madeIn reads made and entered worktrees from transcript lines', async () =
     'not json',
   ]
   expect(lines.filter(isMadeLine).length).toBe(3)
-  expect(madeIn(lines, '/home/u', { agentId: 's1', label: 'helper' })).toEqual([
+  expect(madeIn(keptLines(lines).kept, '/home/u', { agentId: 's1', label: 'helper' })).toEqual([
     {
       path: '/other/.claude/worktrees/x',
       how: 'bash',
@@ -158,13 +159,37 @@ test('branchesMade finds branches a command creates and where', async () => {
   expect(
     branchesIn(
       [
-        JSON.stringify({
-          cwd: '/w',
-          timestamp: '2026-11-11T13:48:00.000Z',
-          message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'git switch -c fix/e' } }] },
-        }),
+        {
+          text: JSON.stringify({
+            cwd: '/w',
+            timestamp: '2026-11-11T13:48:00.000Z',
+            message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'git switch -c fix/e' } }] },
+          }),
+        },
       ],
       '/h',
     ),
   ).toEqual([{ dir: '/w', branch: 'fix/e', at: Date.parse('2026-11-11T13:48:00.000Z') }])
+})
+
+test('a Bash command resolves against the previous line folder, since its own line can hold where it moved', async () => {
+  const add = 'git worktree add -b x .claude/worktrees/x'
+  const lines = [
+    JSON.stringify({ type: 'user', cwd: '/agentx', message: { content: [{ type: 'tool_result' }] } }),
+    JSON.stringify({
+      type: 'assistant',
+      cwd: '/guardian',
+      message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: `${add}; cd /guardian && ${add}` } }] },
+    }),
+  ]
+  const { kept, shell } = keptLines(lines)
+  expect(shell).toBe('/guardian')
+  expect(madeIn(kept, '/h').map(one => one.path)).toEqual([
+    '/agentx/.claude/worktrees/x',
+    '/guardian/.claude/worktrees/x',
+  ])
+  expect(branchesIn(kept, '/h').map(one => one.dir)).toEqual([
+    '/agentx/.claude/worktrees/x',
+    '/guardian/.claude/worktrees/x',
+  ])
 })

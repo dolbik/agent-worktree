@@ -1,7 +1,7 @@
 import type { EngineInterface } from 'claude-code'
 
-import { branchesIn, isMadeLine, jsonOf, madeIn, timeOf, wholeLines } from './detect'
-import type { Found, Made } from './detect'
+import { branchesIn, jsonOf, keptLines, madeIn, timeOf, wholeLines } from './detect'
+import type { Found, Kept, Made } from './detect'
 
 // under the 4 MiB read cap, with room for a character cut at either edge
 const RANGE = 4 * 1024 * 1024 - 64
@@ -9,11 +9,14 @@ const RANGE = 4 * 1024 * 1024 - 64
 // a line longer than one range is skipped
 async function madeLines($: EngineInterface, path: string) {
   const { size } = await $.fs.stat(path)
-  const lines: string[] = []
+  const lines: Kept[] = []
+  let shell: string | undefined
   for (let offset = 0; offset < size; ) {
     const isLast = offset + RANGE >= size
     const range = wholeLines(await $.fs.read(path, { offset, length: RANGE }), isLast)
-    lines.push(...range.lines.filter(isMadeLine))
+    const next = keptLines(range.lines, shell)
+    lines.push(...next.kept)
+    shell = next.shell
     offset += isLast ? RANGE : range.bytes || RANGE
   }
 

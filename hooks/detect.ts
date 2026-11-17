@@ -232,10 +232,23 @@ const MAKES = /worktree add|\bswitch\b|\bcheckout\b/
 export const isMadeLine = (text: string) =>
   text.includes('"toolUseResult":{"worktreePath"') || (text.includes('"name":"Bash"') && MAKES.test(text))
 
-const bashIn = (text: string) => {
+export type Kept = { text: string; shell?: string }
+
+// the lines worth parsing, each with the previous line's folder: a line's own cwd can already be where its command moved
+export const keptLines = (lines: string[], shell?: string) => {
+  const kept: Kept[] = []
+  for (const text of lines) {
+    if (isMadeLine(text)) kept.push({ text, shell })
+    shell = /"cwd":"([^"]*)"/.exec(text.slice(0, 4096))?.[1] ?? shell
+  }
+
+  return { kept, shell }
+}
+
+const bashIn = ({ text, shell }: Kept) => {
   const line = jsonOf<Line>(text)
   const content = line?.message?.content
-  const cwd = line?.cwd ?? ''
+  const cwd = shell ?? line?.cwd ?? ''
   const commands =
     Array.isArray(content) && cwd
       ? (content as Block[])
@@ -246,10 +259,10 @@ const bashIn = (text: string) => {
   return { line, cwd, at: timeOf(line?.timestamp), commands }
 }
 
-// worktrees a transcript's lines show being made or entered; a Bash path resolves against the line's cwd
-export const madeIn = (texts: string[], home: string, who: Pick<Found, 'agentId' | 'label'> = {}): Found[] =>
-  texts.flatMap((text): Found[] => {
-    const { line, cwd, at, commands } = bashIn(text)
+// worktrees a transcript's lines show being made or entered; a Bash path resolves against the shell's folder
+export const madeIn = (lines: Kept[], home: string, who: Pick<Found, 'agentId' | 'label'> = {}): Found[] =>
+  lines.flatMap((kept): Found[] => {
+    const { line, cwd, at, commands } = bashIn(kept)
     const result = line?.toolUseResult
     const kind = /^(Created|Entered|Resumed) worktree/.exec(result?.message ?? '')?.[1]
     if (result?.worktreePath && kind)
@@ -274,9 +287,9 @@ export const madeIn = (texts: string[], home: string, who: Pick<Found, 'agentId'
 export type Made = { dir: string; branch: string; at?: number }
 
 // branches a transcript's lines show being made, each with the folder it was made in
-export const branchesIn = (texts: string[], home: string): Made[] =>
-  texts.flatMap(text => {
-    const { cwd, at, commands } = bashIn(text)
+export const branchesIn = (lines: Kept[], home: string): Made[] =>
+  lines.flatMap(kept => {
+    const { cwd, at, commands } = bashIn(kept)
 
     return commands
       .flatMap(branchesMade)

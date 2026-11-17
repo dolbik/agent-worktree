@@ -1098,10 +1098,13 @@ test('a card lists the PRs of the branches made in its worktree, newest first', 
   const W = { path: '/repo/.claude/worktrees/setup', branch: 'fix/now' }
   const w = world(on, { '/repo': [MAIN, W] })
   const at = '2026-11-11T13:48:00.000Z'
+  const moved = (cwd: string) => JSON.stringify({ type: 'user', cwd, message: { content: [{ type: 'tool_result' }] } })
   w.files['/t/s.jsonl'] = [
     bashLine('/repo', '2026-10-28T12:30:00.000Z', 'git worktree add -b fix/first .claude/worktrees/setup origin/main'),
+    moved(W.path),
     bashLine(W.path, at, 'git fetch -q origin main && git switch -c fix/second origin/main'),
     bashLine(W.path, at, 'cd /repo/.claude/worktrees/setup && git checkout -b fix/third'),
+    moved('/repo'),
     bashLine('/repo', at, 'git switch -c elsewhere'),
   ].join('\n')
   w.mtimes[`${W.path}/.git`] = Date.parse('2026-10-28T12:30:05.000Z')
