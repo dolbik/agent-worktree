@@ -177,6 +177,7 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
     const repo = repos.length > 1 && repoOf[path] ? `${nameOf(repoOf[path])} · ` : ''
     const isOpen = open.includes(one.toolUseId)
     const cardPulls = byPath[path] ?? []
+    const isPullsOpen = open.includes(`${one.toolUseId}:pulls`)
 
     return (
       <Box
@@ -249,13 +250,19 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
             {snap.lastSubject} · {snap.lastAge}
           </Text>
         )}
-        {cardPulls.slice(0, PULLS_SHOWN).map(pull => (
+        {(isPullsOpen ? cardPulls : cardPulls.slice(0, PULLS_SHOWN)).map(pull => (
           <Text wrap="truncate-end" dimColor={isDim}>
             <Text color={pullColor(pull.state)}>{`PR #${pull.number} ${pull.state}`}</Text>
             <Text dimColor>{` · ${pull.title}`}</Text>
           </Text>
         ))}
-        {cardPulls.length > PULLS_SHOWN && <Text dimColor>+{cardPulls.length - PULLS_SHOWN} more PRs</Text>}
+        {cardPulls.length > PULLS_SHOWN && (
+          <Box>
+            <Button key={`${path}:pulls`} onPress={toggle(`${one.toolUseId}:pulls`)}>
+              {isPullsOpen ? 'Fewer PRs' : `+${cardPulls.length - PULLS_SHOWN} more PRs`}
+            </Button>
+          </Box>
+        )}
         {cardPulls.length === 0 && unknown.includes(path) && <Text dimColor>PR unknown</Text>}
         {agent && (
           <Text wrap="truncate-end" dimColor={!isActive}>

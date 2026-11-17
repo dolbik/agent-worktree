@@ -1123,7 +1123,7 @@ test('a card lists the PRs of the branches made in its worktree, newest first', 
   ])
 })
 
-test('a card shows five PRs and counts the rest', async ($, on) => {
+test('a card shows five PRs, and its more-PRs button shows the rest', async ($, on) => {
   const W = { path: '/repo/.claude/worktrees/setup', branch: 'b6' }
   const w = world(on, { '/repo': [MAIN, W] })
   enters(on, W)
@@ -1137,9 +1137,19 @@ test('a card shows five PRs and counts the rest', async ($, on) => {
   await $.tool.call({ tool: 'EnterWorktree', input: {} } as never).catch(() => undefined)
   await texts($)
 
-  const found = await texts($)
-  expect(found.filter(text => text.startsWith('PR #') && text.includes(' · '))).toHaveLength(5)
-  expect(found).toContain('+2 more PRs')
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.press({ key: 'refresh' })
+  const rows = async () =>
+    (await ui.findAll({ type: 'Text' })).filter(one => one.text.startsWith('PR #') && one.text.includes(' · '))
+  const more = async () => (await ui.find({ type: 'Button', key: `${W.path}:pulls` }))?.text
+  expect(await rows()).toHaveLength(5)
+  expect(await more()).toBe('+2 more PRs')
+  await ui.press({ key: `${W.path}:pulls` })
+  expect(await rows()).toHaveLength(7)
+  expect(await more()).toBe('Fewer PRs')
+  await ui.press({ key: `${W.path}:pulls` })
+  expect(await rows()).toHaveLength(5)
+  await ui.unmount()
 })
 
 test('without gh a card says PR unknown and nothing is reported', async ($, on) => {
