@@ -538,12 +538,7 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
       </Button>,
       ...(note
         ? [
-            <Text
-              key={`note:${row.path}`}
-              wrap="truncate-end"
-              color={group === 'needs-a-look' ? 'warning' : undefined}
-              dimColor={group !== 'needs-a-look'}
-            >
+            <Text key={`note:${row.path}`} wrap="truncate-end" dimColor>
               {`      ${note}`}
             </Text>,
           ]
