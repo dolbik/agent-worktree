@@ -1,3 +1,5 @@
+<img src=".claude-plugin/icon.png" alt="" width="96" align="right">
+
 # agent-worktree
 
 A Claude Code mod that shows the git worktrees of the current session in a pane
