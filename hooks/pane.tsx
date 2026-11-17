@@ -512,12 +512,12 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
   const tail = PR_WIDTH + 2 + ageWidth
   const longestName = Math.max(0, ...others.map(row => nameOf(row.path).length))
   const longestBranch = Math.max(0, ...others.map(row => (row.branch ?? 'detached').length))
-  const room = width - 4 - 4 - tail
+  const room = width - 6 - 4 - tail
   const nameWidth = Math.min(longestName, Math.max(12, Math.ceil(room / 2)))
   const branchWidth = Math.min(longestBranch, room - nameWidth)
   const hasBranch = longestBranch > 0 && room - nameWidth >= 12
   const nameRoom = hasBranch ? nameWidth : Math.max(8, Math.min(longestName, room))
-  const otherRow = (row: Row) => {
+  const otherRow = (row: Row, isLast: boolean) => {
     const { group, reasons } = groupOfRow(row)
     const isAtRisk = !!row.dirty || !!row.unpushed || group === 'needs-a-look'
     const note = [
@@ -528,7 +528,7 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
     return [
       <Button key={rowKey(row)} plain onPress={openRow(row)}>
         <Text wrap="truncate-end">
-          {'  '}
+          {'    '}
           <Text color={row.isGone ? 'subtle' : isAtRisk ? 'warning' : 'success'}>●</Text>
           {` ${fit(nameOf(row.path), nameRoom).padEnd(nameRoom)}  `}
           {hasBranch && <Text dimColor>{`${fit(row.branch ?? 'detached', branchWidth).padEnd(branchWidth)}  `}</Text>}
@@ -544,9 +544,13 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
           ]
         : []),
       ...(open.includes(rowKey(row)) ? [tile(row)] : []),
-      <Text key={`line:${row.path}`} wrap="truncate-end" dimColor>
-        {`  ${'─'.repeat(Math.max(0, width - 2))}`}
-      </Text>,
+      ...(isLast
+        ? []
+        : [
+            <Text key={`line:${row.path}`} wrap="truncate-end" dimColor>
+              {`    ${'─'.repeat(Math.max(0, width - 4))}`}
+            </Text>,
+          ]),
     ]
   }
   const tally = (rows: Row[]) =>
@@ -556,18 +560,18 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
         <Text color={one.color}>{`${i > 0 ? ' · ' : ''}${one.n} ${one.n === 1 ? one.one : one.many}`}</Text>
       ))
   const groupLines = (rows: Row[]) =>
-    GROUPS.flatMap(({ group, label, color }) => {
-      const mine = rows
-        .filter(row => groupOfRow(row).group === group)
-        .sort((a, b) => nameOf(a.path).localeCompare(nameOf(b.path)))
-
-      return mine.length === 0
-        ? []
-        : [
-            <Text key={`group:${rows[0]?.repo}:${group}`} color={color}>{`  ${label} · ${mine.length}`}</Text>,
-            ...mine.flatMap(otherRow),
-          ]
-    })
+    GROUPS.map(one => ({
+      ...one,
+      mine: rows
+        .filter(row => groupOfRow(row).group === one.group)
+        .sort((a, b) => nameOf(a.path).localeCompare(nameOf(b.path))),
+    }))
+      .filter(({ mine }) => mine.length > 0)
+      .flatMap(({ group, label, color, mine }, i) => [
+        ...(i > 0 ? [<Text key={`gap:${rows[0]?.repo}:${group}`}> </Text>] : []),
+        <Text key={`group:${rows[0]?.repo}:${group}`} bold color={color}>{`  ${label} · ${mine.length}`}</Text>,
+        ...mine.flatMap((row, j) => otherRow(row, j === mine.length - 1)),
+      ])
   const otherRepos = [...new Set(others.map(row => row.repo))]
   const otherLines = otherRepos.flatMap((repo, index) => {
     const rows = others.filter(row => row.repo === repo)

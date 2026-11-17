@@ -505,8 +505,8 @@ test('the session’s own worktree made before the plugin loaded is found by its
   expect(found).toContain('THIS SESSION  1 worktree')
   expect(found).toContain('made by this session · EnterWorktree')
   expect(found).toContain('OTHER WORKTREES IN repo  2 in 1 repository')
-  expect(found.some(one => one.startsWith('  ● old'))).toBe(true)
-  expect(found.some(one => one.startsWith('  ● someone'))).toBe(true)
+  expect(found.some(one => one.startsWith('    ● old'))).toBe(true)
+  expect(found.some(one => one.startsWith('    ● someone'))).toBe(true)
   const reads = w.pidReads
   await texts($)
   expect(w.pidReads).toBe(reads)
@@ -549,7 +549,7 @@ test('git worktree add through Bash, by the session or a subagent, in any folder
   const found = await texts($)
   expect(found).toContain('THIS SESSION  4 worktrees')
   expect(found).toContain('◆ y')
-  expect(found.some(one => one.startsWith('  ● agent-zz'))).toBe(true)
+  expect(found.some(one => one.startsWith('    ● agent-zz'))).toBe(true)
   expect(found.filter(one => one === `made by this session at ${AT} · git worktree add`).length).toBe(3)
   expect(found).toContain(`made by subagent «build feature» at ${AT} · git worktree add`)
   expect(found).toContain('other · z  ↑0 ↓0 main · clean · nothing unmerged')
@@ -654,21 +654,23 @@ test('other worktrees are one line each, folded by repository, within the pane w
   const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 55 }, surface: 'terminal' })
   await ui.press({ key: 'refresh' })
   const lines = async () =>
-    (await ui.findAll({ type: 'Text' })).map(one => one.text).filter(one => /^ {2}(● |\S.* · \d+$)|^ {6}\S/.test(one))
+    (await ui.findAll({ type: 'Text' }))
+      .map(one => one.text)
+      .filter(one => /^ {2}\S.* · \d+$|^ {4}● |^ {6}\S/.test(one))
   expect((await ui.findAll({ type: 'Text' })).map(one => one.text)).toContain(
     'OTHER WORKTREES IN THESE REPOSITORIES  3 in 2 repositories',
   )
   expect(await lines()).toEqual([
     '  Needs a look · 2',
-    '  ● docs-install…  docs/install…  PR unknown        6 d',
-    '  ● fix-login      fix/login-ti…  PR unknown        4 d',
+    '    ● docs-instal…  docs/instal…  PR unknown        6 d',
+    '    ● fix-login     fix/login-t…  PR unknown        4 d',
     '      4 uncommitted files',
   ])
   for (const line of await lines()) expect(line.length).toBeLessThanOrEqual(55)
-  const rules = (await ui.findAll({ type: 'Text' })).map(one => one.text).filter(one => /^ {2}─+$/.test(one))
-  expect(rules).toEqual(['  ' + '─'.repeat(53), '  ' + '─'.repeat(53)])
+  const rules = (await ui.findAll({ type: 'Text' })).map(one => one.text).filter(one => /^ {4}─+$/.test(one))
+  expect(rules).toEqual(['    ' + '─'.repeat(51)])
   await ui.press({ key: 'repo:/other' })
-  expect(await lines()).toContain('  ● spike          spike-cache    PR unknown        0 d')
+  expect(await lines()).toContain('    ● spike         spike-cache   PR unknown        0 d')
   await ui.unmount()
 })
 
@@ -857,7 +859,7 @@ test('other worktrees show short branch names too', async ($, on) => {
   await start($)
   await $.tool.call({ tool: 'EnterWorktree', name: 'fix-auth' })
 
-  expect(await texts($)).toContain('  ● x  fix-x  PR unknown        0 d')
+  expect(await texts($)).toContain('    ● x  fix-x  PR unknown        0 d')
 })
 
 test('a helper an agent starts in its worktree does not take over the agent’s line', async ($, on) => {
@@ -1337,7 +1339,7 @@ test('groupOf puts each fact in the worktrees mod group', () => {
 })
 
 const otherLines = async ($: Dollar) =>
-  (await texts($, { ...PANE.props, bodyColumns: 80 })).filter(one => /^ {2}(● |\S.* · \d+$)|^ {6}\S/.test(one))
+  (await texts($, { ...PANE.props, bodyColumns: 80 })).filter(one => /^ {2}\S.* · \d+$|^ {4}● |^ {6}\S/.test(one))
 
 test('other worktrees are grouped as the worktrees mod grouped them, each row with its PR', async ($, on) => {
   const at = (name: string, branch: string) => ({ path: `/repo/.claude/worktrees/${name}`, branch })
@@ -1367,21 +1369,23 @@ test('other worktrees are grouped as the worktrees mod grouped them, each row wi
 
   const found = await texts($, { ...PANE.props, bodyColumns: 80 })
   expect(found).toContain('3 need a look · 1 can be removed · 2 PR open · 1 in use')
-  expect(found.filter(one => /^ {2}─+$/.test(one)).length).toBe(7)
+  expect(found.filter(one => /^ {4}─+$/.test(one)).length).toBe(3)
+  expect(found[found.indexOf('  Can be removed · 1') - 1]).toBe(' ')
+  expect(found[found.indexOf('  Needs a look · 3') - 1]).not.toBe(' ')
   expect(await otherLines($)).toEqual([
     '  Needs a look · 3',
-    '  ● dirty         feat-c  PR #13 merged     0 d',
+    '    ● dirty         feat-c  PR #13 merged     0 d',
     '      1 uncommitted file',
-    '  ● moved-on      feat-f  no PR             0 d',
-    '  ● unpushed      feat-d  no PR             0 d',
+    '    ● moved-on      feat-f  no PR             0 d',
+    '    ● unpushed      feat-d  no PR             0 d',
     '      2 commits on no remote',
     '  Can be removed · 1',
-    '  ● merged-clean  feat-a  PR #11 merged     0 d',
+    '    ● merged-clean  feat-a  PR #11 merged     0 d',
     '  PR open · 2',
-    '  ● colleague     feat-g  PR #15 open       0 d',
-    '  ● open-pr       feat-b  PR #12 open       0 d',
+    '    ● colleague     feat-g  PR #15 open       0 d',
+    '    ● open-pr       feat-b  PR #12 open       0 d',
     '  In use · 1',
-    '  ● busy          feat-e  no PR             0 d',
+    '    ● busy          feat-e  no PR             0 d',
     '      a process runs inside',
   ])
 })
@@ -1399,7 +1403,7 @@ test('an open PR from the row’s HEAD wins over a merged one from the same comm
   await start($)
   await $.tool.call({ tool: 'EnterWorktree', name: 'fix-auth' })
 
-  expect(await otherLines($)).toEqual(['  PR open · 1', '  ● two-prs  feat-two  PR #10 open       0 d'])
+  expect(await otherLines($)).toEqual(['  PR open · 1', '    ● two-prs  feat-two  PR #10 open       0 d'])
 })
 
 test('a fact that cannot be read puts the row in Needs a look', async ($, on) => {
@@ -1419,9 +1423,9 @@ test('a fact that cannot be read puts the row in Needs a look', async ($, on) =>
   const unread = '      git or the process list could not be read'
   expect(await otherLines($)).toEqual([
     '  Needs a look · 2',
-    '  ● no-remotes  feat-r  PR #2 merged      0 d',
+    '    ● no-remotes  feat-r  PR #2 merged      0 d',
     unread,
-    '  ● no-status   feat-s  PR #1 merged      0 d',
+    '    ● no-status   feat-s  PR #1 merged      0 d',
     unread,
   ])
   w.per = {}
@@ -1458,12 +1462,12 @@ test('a lock of a running session puts a row in use; a lock left by a stopped se
 
   expect(await otherLines($)).toEqual([
     '  Can be removed · 1',
-    '  ● left  f  PR #3 merged      0 d',
+    '    ● left  f  PR #3 merged      0 d',
     '      lock left by a stopped session',
     '  In use · 2',
-    '  ● hand  h  PR #3 merged      0 d',
+    '    ● hand  h  PR #3 merged      0 d',
     '      locked by a running session',
-    '  ● live  l  PR #3 merged      0 d',
+    '    ● live  l  PR #3 merged      0 d',
     '      locked by a running session',
   ])
   w.processes = null

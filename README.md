@@ -42,15 +42,14 @@ PROBLEMS IN THIS SESSION  1 failed worktree call
 OTHER WORKTREES IN app  3 in 1 repository
 2 need a look · 1 can be removed
   Needs a look · 2
-  ● docs-update  docs/install-steps  no PR              6 d
+    ● docs-update  docs/install-steps  no PR              6 d
       1 commit on no remote
-  ──────────────────────────────────────────────────────────────
-  ● fix-login    fix/login-timeout   PR #52 merged      4 d
+    ────────────────────────────────────────────────────────────
+    ● fix-login    fix/login-timeout   PR #52 merged      4 d
       3 uncommitted files
-  ──────────────────────────────────────────────────────────────
+
   Can be removed · 1
-  ● old-spike    spike/cache         PR #41 merged     98 d
-  ──────────────────────────────────────────────────────────────
+    ● old-spike    spike/cache         PR #41 merged     98 d
 ```
 
 Each of this session's worktrees is a framed card: accent border for the one
@@ -80,16 +79,18 @@ bar, last commit and sparkline, and shortens its buttons.
   used, in this order: **Needs a look** (uncommitted files, commits on no
   remote, no PR, or a fact that could not be read), **Can be removed** (nothing
   uncommitted, every commit on a remote, and its PR merged or closed, or no
-  branch), **PR open** and **In use**. Each row shows the branch, the PR opened from its last
-  commit (else the newest PR if it is open) and the days since that commit; the
-  reasons go on the line below, and a thin line separates one row from the next. In use means a lock held by a running session,
-  or a process whose current folder is inside the worktree; a running session
-  that made the worktree but is not standing in it does not count. The pane
-  removes nothing. Read once a minute while the pane is open, and on `Refresh`.
-  Press a row to open a tile under it with what a card shows: commits ahead and
-  behind, uncommitted files, the diff bar, the last commit, every PR from its
-  branch, and the `Investigate`, `Review diff`, `Cleanup check` and `Files`
-  buttons; an open tile is read every 5 seconds. Press the row again to close it.
+  branch), **PR open** and **In use**. Each row shows the branch, the PR opened
+  from its last commit (else the newest PR if it is open) and the days since
+  that commit; the reasons go on the line below. Rows sit under their group
+  heading, a thin line separates rows of one group, and an empty line separates
+  the groups. In use means a lock held by a running session, or a process whose
+  current folder is inside the worktree; a running session that made the
+  worktree but is not standing in it does not count. The pane removes nothing.
+  Read once a minute while the pane is open, and on `Refresh`. Press a row to
+  open a tile under it with what a card shows: commits ahead and behind,
+  uncommitted files, the diff bar, the last commit, every PR from its branch,
+  and the `Investigate`, `Review diff`, `Cleanup check` and `Files` buttons; an
+  open tile is read every 5 seconds. Press the row again to close it.
 - **Each card**: branch, commits ahead and behind the main worktree's branch,
   uncommitted file count, diff size, last commit and its age.
 - **Live agent**: the agent working in the worktree, matched by its directory:
