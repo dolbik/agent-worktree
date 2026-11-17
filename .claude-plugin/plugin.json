@@ -1,0 +1,11 @@
+{
+  "name": "agent-worktree",
+  "version": "0.2.0",
+  "description": "See every git worktree your Claude Code session and its agents create, live: branch, diff, dirty files, agent status, and file overlaps between parallel agents, with one-click read-only investigate prompts. Inspired by forestui.",
+  "author": {
+    "name": "vchaindz"
+  },
+  "homepage": "https://github.com/vchaindz/agent-worktree",
+  "license": "MIT",
+  "types": "./types/index.d.ts"
+}

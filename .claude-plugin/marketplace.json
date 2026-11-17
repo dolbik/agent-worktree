@@ -1,0 +1,13 @@
+{
+  "name": "agent-worktree",
+  "description": "agent-worktree: a live pane of the git worktrees your Claude Code session and its agents create.",
+  "owner": {
+    "name": "vchaindz"
+  },
+  "plugins": [
+    {
+      "name": "agent-worktree",
+      "source": "./"
+    }
+  ]
+}
