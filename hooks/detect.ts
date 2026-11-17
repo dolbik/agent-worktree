@@ -118,10 +118,11 @@ const joinDir = (dir: string | null | undefined, path: string) =>
         : `${dir.replace(/\/+$/, '')}/${path}`
 
 export type WorktreeAdd = { dir: string | null; path: string | null }
+type GitCall = { dir: string | null | undefined; args: string[] }
 
 // dir: where git runs (`-C`, else a leading `cd`), relative to the shell's folder, null for that folder itself
-export const worktreeAdds = (command: string): WorktreeAdd[] => {
-  const found: WorktreeAdd[] = []
+const gitCalls = (command: string): GitCall[] => {
+  const calls: GitCall[] = []
   let cdDir: string | null | undefined = null
   for (const words of tokenize(withoutHeredocBodies(command))) {
     let i = 0
@@ -133,26 +134,55 @@ export const worktreeAdds = (command: string): WorktreeAdd[] => {
     }
     if (first !== 'git' && !first.endsWith('/git')) continue
     let dir = cdDir
-    for (i++; i < words.length && words[i] !== 'worktree'; i++) {
+    for (i++; i < words.length; i++) {
       const word = words[i] ?? ''
-      if (word === '-C') {
-        dir = joinDir(dir, words[++i] ?? '')
-      } else if (word === '-c') i++
+      if (word === '-C') dir = joinDir(dir, words[++i] ?? '')
+      else if (word === '-c') i++
       else if (!word.startsWith('-')) break
     }
-    if (words[i] !== 'worktree' || words[i + 1] !== 'add') continue
-    let path: string | undefined
-    for (i += 2; i < words.length; i++) {
-      const word = words[i] ?? ''
-      if (word === '-b' || word === '-B' || word === '--reason') i++
-      else if (word === '--') path ??= words[++i]
-      else if (!word.startsWith('-')) path ??= word
-    }
-    if (dir !== undefined) found.push({ dir, path: path !== undefined && !isDynamic(path) ? path : null })
+    calls.push({ dir, args: words.slice(i) })
   }
 
-  return found
+  return calls
 }
+
+const addPath = (args: string[]) => {
+  let path: string | undefined
+  for (let i = 2; i < args.length; i++) {
+    const word = args[i] ?? ''
+    if (word === '-b' || word === '-B' || word === '--reason') i++
+    else if (word === '--') path ??= args[++i]
+    else if (!word.startsWith('-')) path ??= word
+  }
+
+  return path
+}
+
+export const worktreeAdds = (command: string): WorktreeAdd[] =>
+  gitCalls(command).flatMap(({ dir, args }) => {
+    if (args[0] !== 'worktree' || args[1] !== 'add' || dir === undefined) return []
+    const path = addPath(args)
+
+    return [{ dir, path: path !== undefined && !isDynamic(path) ? path : null }]
+  })
+
+const branchFlags = (args: string[]) =>
+  args[0] === 'switch'
+    ? ['-c', '-C', '--create', '--force-create']
+    : args[0] === 'checkout' || (args[0] === 'worktree' && args[1] === 'add')
+      ? ['-b', '-B']
+      : []
+
+// branches a command creates, each with the folder it is made in: a new worktree's for `worktree add -b`
+export const branchesMade = (command: string) =>
+  gitCalls(command).flatMap(({ dir, args }) => {
+    const flags = branchFlags(args)
+    const at = args.findIndex(word => flags.includes(word))
+    const branch = at < 0 ? undefined : args[at + 1]
+    const where = args[0] === 'worktree' ? joinDir(dir, addPath(args) ?? '$') : dir
+
+    return branch === undefined || isDynamic(branch) || where === undefined ? [] : [{ dir: where, branch }]
+  })
 
 // a range of text read from a file: the whole lines in it and their size in bytes
 export const wholeLines = (text: string, isLast: boolean) => {
@@ -162,11 +192,15 @@ export const wholeLines = (text: string, isLast: boolean) => {
   return { lines: whole.split('\n').filter(line => line !== ''), bytes: utf8Length(whole) }
 }
 
-export const utf8Length = (text: string) =>
-  text.length +
-  (text.match(/[\u0080-\u07ff]/g)?.length ?? 0) +
-  2 * (text.match(/[\u0800-\ud7ff\ue000-\uffff]/g)?.length ?? 0) +
-  (text.match(/[\ud800-\udfff]/g)?.length ?? 0)
+export const utf8Length = (text: string) => {
+  let bytes = 0
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i)
+    bytes += code < 0x80 ? 1 : code < 0x800 || (code >= 0xd800 && code <= 0xdfff) ? 2 : 3
+  }
+
+  return bytes
+}
 
 export type Found = Pick<Tracked, 'path' | 'how' | 'agentId' | 'label' | 'at' | 'isBackground'>
 
@@ -178,46 +212,67 @@ type Line = {
   toolUseResult?: { worktreePath?: string; message?: string }
 }
 
-const lineOf = (text: string): Line | undefined => {
+export const jsonOf = <T>(text: string): T | undefined => {
   try {
-    return JSON.parse(text) as Line
+    return JSON.parse(text) as T
   } catch {
     return undefined
   }
 }
 
-// only lines that can hold an EnterWorktree result or a Bash `git worktree add` are parsed
+const MAKES = /worktree add|switch -[cC]|switch --(force-)?create|checkout -[bB]/
+
+// only lines that can hold an EnterWorktree result, or a Bash command making a worktree or a branch, are parsed
 export const isMadeLine = (text: string) =>
-  text.includes('"toolUseResult":{"worktreePath"') || (text.includes('worktree add') && text.includes('"name":"Bash"'))
+  text.includes('"toolUseResult":{"worktreePath"') || (text.includes('"name":"Bash"') && MAKES.test(text))
+
+const bashIn = (text: string) => {
+  const line = jsonOf<Line>(text)
+  const content = line?.message?.content
+  const cwd = line?.cwd ?? ''
+  const commands =
+    Array.isArray(content) && cwd
+      ? (content as Block[])
+          .filter(block => block.type === 'tool_use' && block.name === 'Bash')
+          .map(block => String(block.input?.command ?? ''))
+      : []
+
+  return { line, cwd, at: line?.timestamp ? Date.parse(line.timestamp) : undefined, commands }
+}
 
 // worktrees a transcript's lines show being made or entered; a Bash path resolves against the line's cwd
 export const madeIn = (texts: string[], home: string, who: Pick<Found, 'agentId' | 'label'> = {}): Found[] =>
   texts.flatMap((text): Found[] => {
-    const line = lineOf(text)
-    const at = line?.timestamp ? Date.parse(line.timestamp) : undefined
+    const { line, cwd, at, commands } = bashIn(text)
     const result = line?.toolUseResult
     const kind = /^(Created|Entered|Resumed) worktree/.exec(result?.message ?? '')?.[1]
     if (result?.worktreePath && kind)
       return [
         { path: result.worktreePath, how: kind === 'Created' ? ('enter' as const) : ('entered' as const), at, ...who },
       ]
-    const content = line?.message?.content
-    const cwd = line?.cwd
-    if (!Array.isArray(content) || !cwd) return []
 
-    return (content as Block[])
-      .filter(block => block.type === 'tool_use' && block.name === 'Bash')
-      .flatMap(block => worktreeAdds(String(block.input?.command ?? '')))
-      .flatMap(add =>
-        add.path === null
-          ? []
-          : [
-              {
-                path: resolvePath(resolvePath(cwd, add.dir ?? '.', home), add.path, home),
-                how: 'bash' as const,
-                at,
-                ...who,
-              },
-            ],
-      )
+    return commands.flatMap(worktreeAdds).flatMap(add =>
+      add.path === null
+        ? []
+        : [
+            {
+              path: resolvePath(resolvePath(cwd, add.dir ?? '.', home), add.path, home),
+              how: 'bash' as const,
+              at,
+              ...who,
+            },
+          ],
+    )
+  })
+
+export type Made = { dir: string; branch: string; at?: number }
+
+// branches a transcript's lines show being made, each with the folder it was made in
+export const branchesIn = (texts: string[], home: string): Made[] =>
+  texts.flatMap(text => {
+    const { cwd, at, commands } = bashIn(text)
+
+    return commands
+      .flatMap(branchesMade)
+      .map(made => ({ dir: resolvePath(cwd, made.dir ?? '.', home), branch: made.branch, at }))
   })

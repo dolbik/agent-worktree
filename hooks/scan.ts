@@ -1,9 +1,9 @@
 import { atom, read, update } from 'claude-code'
 import type { AgentInfo, EngineInterface } from 'claude-code'
 
-import type { AgentBadge, FileChange, Problem, Row, Snap, Tracked } from '../types'
-import { deepest, isInside, parseLock, parseWorktreeList } from './detect'
-import type { Listed } from './detect'
+import type { AgentBadge, FileChange, Problem, Pull, Row, Snap, Tracked } from '../types'
+import { deepest, isInside, jsonOf, parseLock, parseWorktreeList } from './detect'
+import type { Listed, Made } from './detect'
 import { madeBefore } from './history'
 
 export const PANE = 'agent-worktree'
@@ -16,22 +16,27 @@ const tracked = atom({ plugin: 'agent-worktree', key: 'tracked' } as const, [], 
 })
 const grove = atom(
   { plugin: 'agent-worktree', key: 'grove' } as const,
-  { repoOf: {}, others: [], rowsAt: 0, snaps: {}, agents: {} },
-  { shape: 'grove-5' },
+  { repoOf: {}, others: [], rowsAt: 0, snaps: {}, agents: {}, branches: {} },
+  { shape: 'grove-6' },
 )
+const pulls = atom({ plugin: 'agent-worktree', key: 'pulls' } as const, { byPath: {}, at: 0 }, { shape: 'pulls-1' })
 const problems = atom({ plugin: 'agent-worktree', key: 'problems' } as const, [], {
   shape: 'problems-1',
 })
 
-export async function git($: EngineInterface, cwd: string, ...args: string[]) {
+async function output($: EngineInterface, argv: string[], cwd: string, timeoutMs = 30_000) {
   try {
-    const ran = await $.process.run(['git', ...args], { cwd })
+    const ran = await $.process.run(argv, { cwd, timeoutMs })
 
     // trimEnd only: `status --porcelain` lines start with a meaningful space
     return ran.exitCode === 0 ? ran.stdout.trimEnd() : undefined
   } catch {
     return undefined
   }
+}
+
+export async function git($: EngineInterface, cwd: string, ...args: string[]) {
+  return output($, ['git', ...args], cwd)
 }
 
 const lines = (text?: string) => (text ? text.split('\n') : [])
@@ -118,6 +123,9 @@ async function rowOf($: EngineInterface, one: Listed & { repo: string }, base?: 
 
 let own: { pid: number; startedAt: string } | null | undefined
 let isHistoryRead = false
+let madeBranches: Made[] = []
+let isLooking = false
+const names = new Map<string, string>()
 
 // Claude Code locks a worktree it makes with `claude session <name> (pid <its pid> start <its start, UTC>)`
 async function ownProcess($: EngineInterface) {
@@ -201,8 +209,10 @@ export function refresh($: EngineInterface, isFull = false) {
 }
 
 async function refreshNow($: EngineInterface, isFull: boolean) {
-  const found = isHistoryRead ? [] : await madeBefore($).catch(() => [])
+  const history = isHistoryRead ? undefined : await madeBefore($).catch(() => undefined)
   isHistoryRead = true
+  if (history) madeBranches = history.branches
+  const found = history?.worktrees ?? []
   const now = await $.clock.now()
   const before = await read($, tracked)
   const sessionDir = before.find(one => one.isHere)?.path ?? (await $.session.cwd())
@@ -312,7 +322,6 @@ async function refreshNow($: EngineInterface, isFull: boolean) {
       live.map(async one => [one.path, await snapOf($, one.path, bases[repoOf[one.path] ?? ''])] as const),
     ),
   )
-  // Claude Code deletes an agent's worktree when the agent ends with no changes
   const gone = live.filter(
     one => snaps[one.path]?.isGone && !ACTIVE.includes(agents.find(agent => agent.id === one.agentId)?.status ?? ''),
   )
@@ -341,6 +350,15 @@ async function refreshNow($: EngineInterface, isFull: boolean) {
   }
 
   const previous = await read($, grove)
+  const base = (path: string) => bases[repoOf[path] ?? '']
+  const branches = Object.fromEntries(
+    ownPaths.map(path => {
+      const made = madeBranches.filter(one => deepest(one.dir, ownPaths) === path).map(one => one.branch)
+      const seen = [...(previous.branches[path] ?? []), ...made, snaps[path]?.branch ?? '']
+
+      return [path, [...new Set(seen)].filter(branch => branch && branch !== 'HEAD' && branch !== base(path))]
+    }),
+  )
   for (const [path, badge] of Object.entries(badges)) {
     const was = previous.agents[path]
     if (was?.id !== badge.id || !ACTIVE.includes(was.status) || !ENDED.includes(badge.status)) continue
@@ -368,5 +386,69 @@ async function refreshNow($: EngineInterface, isFull: boolean) {
     rowsAt: isStale ? now : previous.rowsAt,
     snaps,
     agents: Object.fromEntries(Object.entries(badges).filter(([path]) => ownPaths.includes(path))),
+    branches,
   }))
+  if (isFull || now - (await read($, pulls)).at >= ROWS_EVERY) void lookUpPulls($, branches, repoOf, now)
+}
+
+const stateOf = (state: string): Pull['state'] => (state === 'OPEN' ? 'open' : state === 'MERGED' ? 'merged' : 'closed')
+
+// PRs whose head is one of the branches, read from GitHub with a gh query; undefined when gh cannot answer
+async function pullsOf($: EngineInterface, repo: string, branches: string[]) {
+  const ask = (...args: string[]) => output($, ['gh', ...args], repo, 10_000)
+  if (!names.has(repo)) {
+    const name = await ask('repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner')
+    if (name) names.set(repo, name.trim())
+  }
+  const [owner, name] = (names.get(repo) ?? '').split('/')
+  if (!owner || !name) return undefined
+  const fields = branches.map(
+    (branch, i) =>
+      `b${i}: pullRequests(headRefName: ${JSON.stringify(branch)}, first: 3, orderBy: {field: CREATED_AT, direction: DESC}) { nodes { number state title } }`,
+  )
+  const query = `query { repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) { ${fields.join(' ')} } }`
+  const answer = await ask('api', 'graphql', '-f', `query=${query}`)
+  type Nodes = { nodes?: { number: number; state: string; title: string }[] } | null
+  const data = jsonOf<{ data?: { repository?: Record<string, Nodes> } }>(answer ?? '')?.data?.repository
+  if (!data) return undefined
+
+  return Object.fromEntries(
+    branches.map((branch, i) => [
+      branch,
+      (data[`b${i}`]?.nodes ?? []).map(node => ({
+        number: node.number,
+        state: stateOf(node.state),
+        title: node.title,
+      })),
+    ]),
+  )
+}
+
+// runs beside the refresh queue, so a slow network never holds up the pane
+async function lookUpPulls(
+  $: EngineInterface,
+  branches: Record<string, string[]>,
+  repoOf: Record<string, string>,
+  now: number,
+) {
+  if (isLooking) return
+  isLooking = true
+  try {
+    const previous = await read($, pulls)
+    const byPath: Record<string, Pull[]> = {}
+    const paths = Object.keys(branches).filter(path => (branches[path] ?? []).length > 0)
+    for (const repo of new Set(paths.map(path => repoOf[path] ?? ''))) {
+      const mine = paths.filter(path => (repoOf[path] ?? '') === repo)
+      const found = repo ? await pullsOf($, repo, [...new Set(mine.flatMap(path => branches[path] ?? []))]) : undefined
+      for (const path of mine)
+        byPath[path] = found
+          ? (branches[path] ?? []).flatMap(branch => found[branch] ?? []).sort((a, b) => b.number - a.number)
+          : (previous.byPath[path] ?? [])
+    }
+    await update($, pulls, () => ({ byPath, at: now }))
+  } catch {
+    // no PR rows this time; the next lookup tries again
+  } finally {
+    isLooking = false
+  }
 }

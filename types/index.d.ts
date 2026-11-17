@@ -58,7 +58,11 @@ export type Grove = {
   rowsAt: number
   snaps: Record<string, Snap>
   agents: Record<string, AgentBadge>
+  branches: Record<string, string[]>
 }
+
+export type Pull = { number: number; state: 'open' | 'merged' | 'closed'; title: string }
+export type Pulls = { byPath: Record<string, Pull[]>; at: number }
 
 declare module 'claude-code' {
   interface PluginState {
@@ -67,6 +71,7 @@ declare module 'claude-code' {
       grove: Shaped<Grove>
       problems: Shaped<Problem[]>
       expanded: Shaped<string[]>
+      pulls: Shaped<Pulls>
     }
   }
 }

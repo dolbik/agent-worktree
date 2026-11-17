@@ -1,15 +1,16 @@
 import { atom, read, update } from 'claude-code'
 import type { ElementTable, EngineInterface } from 'claude-code'
 
-import type { Problem, Row, Snap, Tracked } from '../types'
+import type { Problem, Pull, Row, Snap, Tracked } from '../types'
 import { ACTIVE, PANE, liveTracked, nameOf, refresh } from './scan'
 
 const tracked = atom({ plugin: 'agent-worktree', key: 'tracked' } as const, [], { shape: 'tracked-2' })
 const grove = atom(
   { plugin: 'agent-worktree', key: 'grove' } as const,
-  { repoOf: {}, others: [], rowsAt: 0, snaps: {}, agents: {} },
-  { shape: 'grove-5' },
+  { repoOf: {}, others: [], rowsAt: 0, snaps: {}, agents: {}, branches: {} },
+  { shape: 'grove-6' },
 )
+const pulls = atom({ plugin: 'agent-worktree', key: 'pulls' } as const, { byPath: {}, at: 0 }, { shape: 'pulls-1' })
 const problems = atom({ plugin: 'agent-worktree', key: 'problems' } as const, [], { shape: 'problems-1' })
 const expanded = atom({ plugin: 'agent-worktree', key: 'expanded' } as const, [], { shape: 'expanded-1' })
 
@@ -17,10 +18,13 @@ const READ_ONLY = 'Read-only: do not modify, switch into, merge or remove the wo
 const SPARK = '▁▂▃▄▅▆▇█'
 const BAR_WIDTH = 24
 const PROBLEMS_SHOWN = 5
+const PULLS_SHOWN = 5
 
 export function openPane($: EngineInterface) {
   return $.ui.open({ id: PANE, title: 'Worktrees' })
 }
+
+const pullColor = (state: Pull['state']) => (state === 'open' ? 'success' : state === 'merged' ? 'merged' : 'subtle')
 
 const isAgentMade = (one: Tracked) => one.agentId !== undefined || one.how === 'agent'
 
@@ -118,6 +122,7 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
   const { repoOf, others, snaps, agents } = await read($, grove)
   const failed = await read($, problems)
   const open = await read($, expanded)
+  const { byPath } = await read($, pulls)
   const now = await $.clock.now()
   const isNarrow = width < 60
   const live = liveTracked(list)
@@ -162,6 +167,7 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
     const isMerged = !!snap && !snap.isGone && !!snap.base && snap.ahead === 0 && snap.dirty === 0
     const repo = repos.length > 1 && repoOf[path] ? `${nameOf(repoOf[path])} · ` : ''
     const isOpen = open.includes(one.toolUseId)
+    const cardPulls = byPath[path] ?? []
 
     return (
       <Box
@@ -234,6 +240,13 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
             {snap.lastSubject} · {snap.lastAge}
           </Text>
         )}
+        {cardPulls.slice(0, PULLS_SHOWN).map(pull => (
+          <Text wrap="truncate-end" dimColor={isDim}>
+            <Text color={pullColor(pull.state)}>{`PR #${pull.number} ${pull.state}`}</Text>
+            <Text dimColor>{` · ${pull.title}`}</Text>
+          </Text>
+        ))}
+        {cardPulls.length > PULLS_SHOWN && <Text dimColor>+{cardPulls.length - PULLS_SHOWN} more PRs</Text>}
         {agent && (
           <Text wrap="truncate-end" dimColor={!isActive}>
             <Text color={isActive ? 'success' : undefined}>●</Text> {agent.status}

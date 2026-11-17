@@ -52,6 +52,9 @@ type World = {
   pid?: { pid: number; start: string }
   gone: Set<string>
   files: Record<string, string>
+  mtimes: Record<string, number>
+  unreadable: Set<string>
+  pulls?: Record<string, { number: number; state: string; title: string }[]>
   pidReads: number
   gitDirs: string[]
   sent: string[]
@@ -86,6 +89,21 @@ const gitAnswer = (w: World, argv: readonly string[], dir: string) => {
   return undefined
 }
 
+const ghAnswer = (w: World, argv: readonly string[]) => {
+  if (!w.pulls) return undefined
+  if (argv[1] === 'repo') return 'o/r'
+  const query = argv.find(arg => arg.startsWith('query=')) ?? ''
+  const fields = [...query.matchAll(/(b\d+): pullRequests\(headRefName: ("[^"]*")/g)]
+
+  return JSON.stringify({
+    data: {
+      repository: Object.fromEntries(
+        fields.map(([, alias, branch]) => [alias, { nodes: w.pulls?.[JSON.parse(branch ?? '""')] ?? [] }]),
+      ),
+    },
+  })
+}
+
 const world = (on: On, repos: Record<string, Wt[]>, cwd = '/repo'): World => {
   const w: World = {
     repos,
@@ -94,6 +112,8 @@ const world = (on: On, repos: Record<string, Wt[]>, cwd = '/repo'): World => {
     per: {},
     gone: new Set(),
     files: {},
+    mtimes: {},
+    unreadable: new Set(),
     pidReads: 0,
     gitDirs: [],
     sent: [],
@@ -126,19 +146,29 @@ const world = (on: On, repos: Record<string, Wt[]>, cwd = '/repo'): World => {
   on('agent.list', () => ({ value: w.agents }))
   on('fs.exists', (_, e) => ({ value: !w.gone.has(e.path) }))
   on('session.info', () => ({ value: { transcriptPath: '/t/s.jsonl' } as never }))
-  on('fs.stat', (_, e) => ({ value: { kind: 'file', size: (w.files[e.path] ?? '').length } as never }))
+  on('fs.stat', (_, e) => {
+    if (w.files[e.path] === undefined && w.mtimes[e.path] === undefined) throw new Error(`no file ${e.path}`)
+
+    return { value: { kind: 'file', size: (w.files[e.path] ?? '').length, mtimeMs: w.mtimes[e.path] ?? 0 } as never }
+  })
   on('fs.read', (_, e) => {
     const text = w.files[e.path]
-    if (text === undefined) throw new Error(`no file ${e.path}`)
+    if (text === undefined || w.unreadable.has(e.path)) throw new Error(`no file ${e.path}`)
     const offset = e.offset ?? 0
 
     return { value: text.slice(offset, e.length === undefined ? undefined : offset + e.length) }
   })
-  on('fs.list', (_, e) => ({
-    value: Object.keys(w.files)
+  on('fs.list', (_, e) => {
+    const names = Object.keys(w.files)
       .filter(path => path.startsWith(`${e.path}/`))
-      .map(path => ({ name: path.slice(e.path.length + 1), kind: 'file' }) as never),
-  }))
+      .map(path => path.slice(e.path.length + 1).split('/'))
+
+    return {
+      value: [...new Map(names.map(parts => [parts[0], parts.length > 1 ? 'dir' : 'file'])).entries()].map(
+        ([name, kind]) => ({ name, kind }) as never,
+      ),
+    }
+  })
   on('process.run', (_, e) => {
     const [command] = e.argv
     if (command === 'sh') w.pidReads++
@@ -148,7 +178,9 @@ const world = (on: On, repos: Record<string, Wt[]>, cwd = '/repo'): World => {
         ? w.pid && String(w.pid.pid)
         : command === 'ps'
           ? w.pid?.start
-          : gitAnswer(w, e.argv, e.init?.cwd ?? w.cwd)
+          : command === 'gh'
+            ? ghAnswer(w, e.argv)
+            : gitAnswer(w, e.argv, e.init?.cwd ?? w.cwd)
 
     return {
       value: {
@@ -968,6 +1000,8 @@ test('worktrees the session and its subagents made before the plugin loaded are 
     description: 'old helper',
     requestShape: 'background',
   })
+  w.mtimes[`${X.path}/.git`] = Date.parse(AT1) + 2000
+  w.mtimes[`${S2.path}/.git`] = Date.parse(AT1) + 2000
   await start($, '/home/u')
 
   const found = await texts($)
@@ -1008,4 +1042,115 @@ test('this session lists its newest worktree first', async ($, on) => {
   const older = found.findIndex(text => text.includes(`at ${clockOf(Date.parse('2026-06-30T19:28:55.000Z'), NOW)}`))
   expect(newer).toBeGreaterThan(-1)
   expect(older).toBeGreaterThan(newer)
+})
+
+const bashLine = (cwd: string, timestamp: string, command: string) =>
+  JSON.stringify({
+    type: 'assistant',
+    cwd,
+    timestamp,
+    message: { content: [{ type: 'tool_use', name: 'Bash', input: { command } }] },
+  })
+
+test('a Bash add in a transcript counts only when the worktree was made then', async ($, on) => {
+  const OLD = { path: '/repo/.claude/worktrees/old', branch: 'old' }
+  const MADE = { path: '/repo/.claude/worktrees/made', branch: 'made' }
+  const w = world(on, { '/repo': [MAIN, OLD, MADE] })
+  const at = '2026-11-10T09:42:00.000Z'
+  w.files['/t/s.jsonl'] = [
+    bashLine('/repo', at, 'git worktree add .claude/worktrees/old'),
+    bashLine('/repo', at, 'git worktree add .claude/worktrees/made'),
+  ].join('\n')
+  w.mtimes[`${OLD.path}/.git`] = Date.parse('2026-10-08T10:08:51.000Z')
+  w.mtimes[`${MADE.path}/.git`] = Date.parse(at) + 3000
+  await start($)
+
+  const found = await texts($)
+  expect(found).toContain('THIS SESSION  1 worktree')
+  expect(found.some(text => text.startsWith('⎇ made'))).toBe(true)
+  expect(found.some(text => text.startsWith('⎇ old'))).toBe(false)
+})
+
+test('workflow agents are read, and an unreadable transcript skips only itself', async ($, on) => {
+  const A = { path: '/repo/.claude/worktrees/from-workflow', branch: 'a' }
+  const B = { path: '/repo/.claude/worktrees/from-main', branch: 'b' }
+  const w = world(on, { '/repo': [MAIN, A, B] })
+  const at = '2026-11-12T08:00:00.000Z'
+  w.files['/t/s.jsonl'] = bashLine('/repo', at, 'git worktree add .claude/worktrees/from-main')
+  w.files['/t/s/subagents/workflows/wf_1/agent-w1.jsonl'] = bashLine(
+    '/repo',
+    at,
+    'git worktree add .claude/worktrees/from-workflow',
+  )
+  w.files['/t/s/subagents/agent-bad.jsonl'] = 'x'
+  w.unreadable.add('/t/s/subagents/agent-bad.jsonl')
+  w.mtimes[`${A.path}/.git`] = Date.parse(at)
+  w.mtimes[`${B.path}/.git`] = Date.parse(at)
+  await start($)
+
+  const found = await texts($)
+  expect(found).toContain('THIS SESSION  2 worktrees')
+  expect(found.some(text => text.includes('made by subagent «w1»'))).toBe(true)
+})
+
+test('a card lists the PRs of the branches made in its worktree, newest first', async ($, on) => {
+  const W = { path: '/repo/.claude/worktrees/setup', branch: 'fix/now' }
+  const w = world(on, { '/repo': [MAIN, W] })
+  const at = '2026-11-11T13:48:00.000Z'
+  w.files['/t/s.jsonl'] = [
+    bashLine('/repo', '2026-10-28T12:30:00.000Z', 'git worktree add -b fix/first .claude/worktrees/setup origin/main'),
+    bashLine(W.path, at, 'git fetch -q origin main && git switch -c fix/second origin/main'),
+    bashLine(W.path, at, 'cd /repo/.claude/worktrees/setup && git checkout -b fix/third'),
+    bashLine('/repo', at, 'git switch -c elsewhere'),
+  ].join('\n')
+  w.mtimes[`${W.path}/.git`] = Date.parse('2026-10-28T12:30:05.000Z')
+  w.pulls = {
+    'fix/first': [{ number: 170, state: 'MERGED', title: 'First change' }],
+    'fix/second': [{ number: 175, state: 'CLOSED', title: 'Second change' }],
+    'fix/now': [{ number: 180, state: 'OPEN', title: 'Current change' }],
+    elsewhere: [{ number: 1, state: 'OPEN', title: 'Not from this worktree' }],
+  }
+  await start($)
+  await texts($)
+
+  const found = await texts($)
+  const rows = found.filter(text => text.startsWith('PR #') && text.includes(' · '))
+  expect(rows).toEqual([
+    'PR #180 open · Current change',
+    'PR #175 closed · Second change',
+    'PR #170 merged · First change',
+  ])
+})
+
+test('a card shows five PRs and counts the rest', async ($, on) => {
+  const W = { path: '/repo/.claude/worktrees/setup', branch: 'b6' }
+  const w = world(on, { '/repo': [MAIN, W] })
+  enters(on, W)
+  w.pulls = Object.fromEntries(
+    [1, 2, 3, 4, 5, 6, 7].map(n => [n === 6 ? 'b6' : `b${n}`, [{ number: n, state: 'MERGED', title: `change ${n}` }]]),
+  )
+  w.files['/t/s.jsonl'] = [1, 2, 3, 4, 5, 7]
+    .map(n => bashLine(W.path, '2026-11-11T13:48:00.000Z', `git switch -c b${n}`))
+    .join('\n')
+  await start($)
+  await $.tool.call({ tool: 'EnterWorktree', input: {} } as never).catch(() => undefined)
+  await texts($)
+
+  const found = await texts($)
+  expect(found.filter(text => text.startsWith('PR #') && text.includes(' · '))).toHaveLength(5)
+  expect(found).toContain('+2 more PRs')
+})
+
+test('without gh no PR rows are drawn and nothing is reported', async ($, on) => {
+  const W = { path: '/repo/.claude/worktrees/setup', branch: 'fix/now' }
+  const w = world(on, { '/repo': [MAIN, W] })
+  w.files['/t/s.jsonl'] = bashLine('/repo', '2026-10-28T12:30:00.000Z', 'git worktree add .claude/worktrees/setup')
+  w.mtimes[`${W.path}/.git`] = Date.parse('2026-10-28T12:30:00.000Z')
+  await start($)
+  await texts($)
+
+  const found = await texts($)
+  expect(found).toContain('THIS SESSION  1 worktree')
+  expect(found.some(text => text.startsWith('PR #'))).toBe(false)
+  expect(found.some(text => text.includes('PROBLEMS'))).toBe(false)
 })

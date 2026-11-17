@@ -3,6 +3,8 @@ import { expect, test } from 'claude-code/testing'
 import {
   deepest,
   firstLine,
+  branchesIn,
+  branchesMade,
   isMadeLine,
   madeIn,
   parseLock,
@@ -139,4 +141,29 @@ test('madeIn reads made and entered worktrees from transcript lines', async () =
       label: 'helper',
     },
   ])
+})
+
+test('branchesMade finds branches a command creates and where', async () => {
+  expect(branchesMade('git fetch -q origin main && git switch -c fix/a origin/main')).toEqual([
+    { dir: null, branch: 'fix/a' },
+  ])
+  expect(branchesMade('cd /w && git checkout -B fix/b')).toEqual([{ dir: '/w', branch: 'fix/b' }])
+  expect(branchesMade('git -C /r worktree add -b fix/c .claude/worktrees/c main')).toEqual([
+    { dir: '/r/.claude/worktrees/c', branch: 'fix/c' },
+  ])
+  expect(branchesMade('git switch main; git checkout -b "$B"; git branch fix/d')).toEqual([])
+  expect(isMadeLine('{"name":"Bash","input":{"command":"git switch -c x"}}')).toBe(true)
+  expect(isMadeLine('{"name":"Bash","input":{"command":"git switch x"}}')).toBe(false)
+  expect(
+    branchesIn(
+      [
+        JSON.stringify({
+          cwd: '/w',
+          timestamp: '2026-11-11T13:48:00.000Z',
+          message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'git switch -c fix/e' } }] },
+        }),
+      ],
+      '/h',
+    ),
+  ).toEqual([{ dir: '/w', branch: 'fix/e', at: Date.parse('2026-11-11T13:48:00.000Z') }])
 })
