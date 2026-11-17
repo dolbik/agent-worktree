@@ -10,6 +10,8 @@ import {
   madeIn,
   parseLock,
   parseWorktreeList,
+  processFolders,
+  startsOf,
   resolvePath,
   utf8Length,
   wholeLines,
@@ -48,14 +50,29 @@ test('parseWorktreeList reads paths, branches and lock text', async () => {
     'worktree /side\nHEAD c\ndetached\nlocked',
   ].join('\n\n')
   expect(parseWorktreeList(porcelain)).toEqual([
-    { path: '/repo', branch: 'main', lock: undefined },
+    { path: '/repo', branch: 'main', head: 'a', lock: undefined },
     {
       path: '/repo/.claude/worktrees/build',
       branch: 'worktree-build',
+      head: 'b',
       lock: 'claude session build (pid 88572 start Tue Nov 17 07:25:46 2026)',
     },
-    { path: '/side', branch: undefined, lock: '' },
+    { path: '/side', branch: undefined, head: 'c', lock: '' },
   ])
+})
+
+test('processFolders lists where processes stand, leaving out git and lsof', async () => {
+  const lsof = ['p1', 'cnode', 'n/a', 'p2', 'cgit', 'n/b', 'p3', 'clsof', 'n/c', 'p4', 'n/d'].join('\n')
+  expect(processFolders(lsof)).toEqual(['/a', '/d'])
+})
+
+test('startsOf reads each pid with its start time', async () => {
+  expect(startsOf('  500 Tue Nov 17 07:00:00 2026\n 61 Mon Nov 16 22:16:49 2026\n')).toEqual(
+    new Map([
+      [500, 'Tue Nov 17 07:00:00 2026'],
+      [61, 'Mon Nov 16 22:16:49 2026'],
+    ]),
+  )
 })
 
 test('parseLock reads the pid and start of a Claude Code lock', async () => {

@@ -40,9 +40,14 @@ PROBLEMS IN THIS SESSION  1 failed worktree call
 ✗ 14:05  subagent «fix auth»  add ../tmp-x  invalid reference: .
 
 OTHER WORKTREES  3 in 1 repository
-● fix-login        fix/login-timeout      ↑2 ↓0 · 4 days ago · 3 dirty
-● docs-update      docs/install-steps     ↑1 ↓12 · 6 days ago
-● old-spike        spike/cache            ↑1 ↓155 · 3 months ago
+1 can be removed · 2 need a look
+  Can be removed · 1
+  ● old-spike    spike/cache         PR #41 merged     98 d
+  Needs a look · 2
+  ● docs-update  docs/install-steps  no PR              6 d
+      1 commit on no remote
+  ● fix-login    fix/login-timeout   PR #52 merged      4 d
+      3 uncommitted files
 ```
 
 Each of this session's worktrees is a framed card: accent border for the one
@@ -67,9 +72,17 @@ bar, last commit and sparkline, and shortens its buttons.
   session is in is marked `★ here`.
 - **Problems in this session**: one line per failed worktree call (a refused
   `EnterWorktree`, a `git worktree add` that failed), the last five.
-- **Other worktrees**: the rest of the worktrees of the same repositories, one
-  line each, folded by repository when there are several. Read once a minute
-  and on `Refresh`.
+- **Other worktrees**: the rest of the worktrees of the same repositories,
+  folded by repository when there are several, in the groups the worktrees mod
+  used: **Can be removed** (nothing uncommitted, every commit on a remote, and
+  its PR merged or closed, or no branch), **PR open**, **Needs a look**
+  (uncommitted files, commits on no remote, no PR, or a fact that could not be
+  read) and **In use**. Each row shows the branch, the PR opened from its last
+  commit (else the newest PR if it is open) and the days since that commit; the
+  reasons go on the line below. In use means a lock held by a running session,
+  or a process whose current folder is inside the worktree; a running session
+  that made the worktree but is not standing in it does not count. The pane
+  removes nothing. Read once a minute while the pane is open, and on `Refresh`.
 - **Each card**: branch, commits ahead and behind the main worktree's branch,
   uncommitted file count, diff size, last commit and its age.
 - **Live agent**: the agent working in the worktree, matched by its directory:

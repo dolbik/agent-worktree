@@ -1,13 +1,24 @@
 import { expect, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 
-import { clockOf } from './pane'
+import { clockOf, groupOf } from './pane'
+import type { Facts } from './pane'
 
 type On = Parameters<TestBody>[1]
 
 type Dollar = Parameters<TestBody>[0]
 type Wt = { path: string; branch: string; lock?: string }
-type Answers = { status: string; revList: string; shortstat: string; nameStatus: string; log: string; age: string }
+type Answers = {
+  status: string
+  revList: string
+  unpushed: string
+  shortstat: string
+  nameStatus: string
+  log: string
+  age: string
+  committed: string
+  fail: string
+}
 
 const PANE = {
   plugin: 'agent-worktree',
@@ -50,11 +61,17 @@ type World = {
   agents: never[]
   per: Record<string, Partial<Answers>>
   pid?: { pid: number; start: string }
+  processes?: Record<number, string> | null
+  lsof?: string | null
+  isLsofCut?: boolean
   gone: Set<string>
   files: Record<string, string>
   mtimes: Record<string, number>
   unreadable: Set<string>
-  pulls?: Record<string, { number: number; state: string; title: string; author?: { login: string } }[]>
+  pulls?: Record<
+    string,
+    { number: number; state: string; title: string; headRefOid?: string; author?: { login: string } }[]
+  >
   pidReads: number
   gitDirs: string[]
   sent: string[]
@@ -73,6 +90,7 @@ const gitAnswer = (w: World, argv: readonly string[], dir: string) => {
   if (!best) return undefined
   const args = argv.slice(1).filter(arg => arg !== '--no-optional-locks')
   const per = w.per[best.wt.path] ?? {}
+  if (per.fail === args[0]) return undefined
   if (args[0] === 'worktree')
     return (w.repos[best.repo] ?? [])
       .map(
@@ -81,8 +99,9 @@ const gitAnswer = (w: World, argv: readonly string[], dir: string) => {
       .join('\n\n')
   if (args[0] === 'rev-parse') return best.wt.branch
   if (args[0] === 'status') return per.status ?? ''
-  if (args[0] === 'rev-list') return per.revList ?? '0\t0'
+  if (args[0] === 'rev-list') return args.includes('--not') ? (per.unpushed ?? '0') : (per.revList ?? '0\t0')
   if (args[0] === 'diff') return args[1] === '--shortstat' ? (per.shortstat ?? '') : (per.nameStatus ?? '')
+  if (args[0] === 'log' && args.includes('--format=%ct')) return per.committed ?? String(NOW / 1000 - 60)
   if (args[0] === 'log')
     return args.includes('--format=%cr') ? (per.age ?? '1 minute ago') : (per.log ?? 'init\u00001 minute ago')
 
@@ -172,23 +191,32 @@ const world = (on: On, repos: Record<string, Wt[]>, cwd = '/repo'): World => {
   })
   on('process.run', (_, e) => {
     const [command] = e.argv
+    if (command === 'ps' && e.argv.includes('pid=,lstart=') && w.processes === null) throw new Error('no ps')
     if (command === 'sh') w.pidReads++
     if (command === 'git') w.gitDirs.push(e.init?.cwd ?? w.cwd)
     const out =
       command === 'sh'
         ? w.pid && String(w.pid.pid)
         : command === 'ps'
-          ? w.pid?.start
-          : command === 'gh'
-            ? ghAnswer(w, e.argv)
-            : gitAnswer(w, e.argv, e.init?.cwd ?? w.cwd)
+          ? e.argv.includes('pid=,lstart=')
+            ? Object.entries(w.processes ?? {})
+                .map(([pid, start]) => `${pid} ${start}`)
+                .join('\n')
+            : w.pid?.start
+          : command === 'lsof'
+            ? w.lsof === undefined
+              ? 'p1\ncnode\nn/'
+              : (w.lsof ?? undefined)
+            : command === 'gh'
+              ? ghAnswer(w, e.argv)
+              : gitAnswer(w, e.argv, e.init?.cwd ?? w.cwd)
 
     return {
       value: {
         exitCode: out === undefined ? 128 : 0,
         stdout: out ?? '',
         stderr: '',
-        isStdoutTruncated: false,
+        isStdoutTruncated: command === 'lsof' && !!w.isLsofCut,
         isStderrTruncated: false,
       },
     }
@@ -227,7 +255,10 @@ const enters = (on: On, wt: Wt) =>
 
 const start = ($: Dollar, cwd = '/repo') => $.session.start({ cwd, surface: 'terminal', isInteractive: true })
 
-const texts = async ($: Dollar, props = PANE.props) => {
+const texts = async (
+  $: Dollar,
+  props: Omit<typeof PANE.props, 'bodyColumns'> & { bodyColumns: number } = PANE.props,
+) => {
   const ui = await $.ui.mount({ ...PANE, props, surface: 'terminal' })
   await ui.press({ key: 'refresh' })
   const found = (await ui.findAll({ type: 'Text' })).map(one => one.text)
@@ -474,8 +505,8 @@ test('the session’s own worktree made before the plugin loaded is found by its
   expect(found).toContain('THIS SESSION  1 worktree')
   expect(found).toContain('made by this session · EnterWorktree')
   expect(found).toContain('OTHER WORKTREES  2 in 1 repository')
-  expect(found.some(one => one.startsWith('● old'))).toBe(true)
-  expect(found.some(one => one.startsWith('● someone'))).toBe(true)
+  expect(found.some(one => one.startsWith('  ● old'))).toBe(true)
+  expect(found.some(one => one.startsWith('  ● someone'))).toBe(true)
   const reads = w.pidReads
   await texts($)
   expect(w.pidReads).toBe(reads)
@@ -518,7 +549,7 @@ test('git worktree add through Bash, by the session or a subagent, in any folder
   const found = await texts($)
   expect(found).toContain('THIS SESSION  4 worktrees')
   expect(found).toContain('◆ y')
-  expect(found.some(one => one.startsWith('● agent-zz'))).toBe(true)
+  expect(found.some(one => one.startsWith('  ● agent-zz'))).toBe(true)
   expect(found.filter(one => one === `made by this session at ${AT} · git worktree add`).length).toBe(3)
   expect(found).toContain(`made by subagent «build feature» at ${AT} · git worktree add`)
   expect(found).toContain('other · z  ↑0 ↓0 main · clean · nothing unmerged')
@@ -608,8 +639,8 @@ test('other worktrees are one line each, folded by repository, within the pane w
   const O2 = { path: '/repo/.claude/worktrees/docs-install-steps', branch: 'docs/install-steps-for-windows' }
   const O3 = { path: '/other/.claude/worktrees/spike', branch: 'spike-cache' }
   const w = world(on, { '/repo': [MAIN, WT, O1, O2], '/other': [{ path: '/other', branch: 'main' }, O3] })
-  w.per[O1.path] = { status: ' M a\n M b\n M c\n M d', revList: '0\t6', age: '4 days ago' }
-  w.per[O2.path] = { revList: '1\t1', age: '6 days ago' }
+  w.per[O1.path] = { status: ' M a\n M b\n M c\n M d', committed: String(NOW / 1000 - 4 * 86400) }
+  w.per[O2.path] = { committed: String(NOW / 1000 - 6 * 86400) }
   enters(on, WT)
   on('tool.call', { tool: 'Bash' }, () => {
     w.repos['/other']?.push({ path: '/other/.claude/worktrees/mine', branch: 'mine' })
@@ -620,17 +651,20 @@ test('other worktrees are one line each, folded by repository, within the pane w
   await $.tool.call({ tool: 'EnterWorktree', name: 'fix-auth' })
   await $.tool.call({ tool: 'Bash', command: 'git -C /other worktree add .claude/worktrees/mine' })
 
-  const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 62 }, surface: 'terminal' })
+  const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 55 }, surface: 'terminal' })
   await ui.press({ key: 'refresh' })
-  const rows = async () => (await ui.findAll({ type: 'Text' })).map(one => one.text).filter(one => one.startsWith('● '))
+  const lines = async () =>
+    (await ui.findAll({ type: 'Text' })).map(one => one.text).filter(one => /^ {2}(● |\S.* · \d+$)|^ {6}\S/.test(one))
   expect((await ui.findAll({ type: 'Text' })).map(one => one.text)).toContain('OTHER WORKTREES  3 in 2 repositories')
-  expect(await rows()).toEqual([
-    '● fix-login       fix/login-tim…  ↑6 ↓0 · 4 days ago · 4 dirty',
-    '● docs-install-…  docs/install-…  ↑1 ↓1 · 6 days ago',
+  expect(await lines()).toEqual([
+    '  Needs a look · 2',
+    '  ● docs-install…  docs/install…  PR unknown        6 d',
+    '  ● fix-login      fix/login-ti…  PR unknown        4 d',
+    '      4 uncommitted files',
   ])
-  for (const row of await rows()) expect(row.length).toBeLessThanOrEqual(62)
+  for (const line of await lines()) expect(line.length).toBeLessThanOrEqual(55)
   await ui.press({ key: 'repo:/other' })
-  expect(await rows()).toContain('● spike           spike-cache     ↑0 ↓0 · 1 minute ago')
+  expect(await lines()).toContain('  ● spike          spike-cache    PR unknown        0 d')
   await ui.unmount()
 })
 
@@ -819,7 +853,7 @@ test('other worktrees show short branch names too', async ($, on) => {
   await start($)
   await $.tool.call({ tool: 'EnterWorktree', name: 'fix-auth' })
 
-  expect(await texts($)).toContain('● x  fix-x  ↑0 ↓0 · 1 minute ago')
+  expect(await texts($)).toContain('  ● x  fix-x  PR unknown        0 d')
 })
 
 test('a helper an agent starts in its worktree does not take over the agent’s line', async ($, on) => {
@@ -893,16 +927,6 @@ test('a worktree removed with git shows as removed and leaves the counts', async
   await band.unmount()
 })
 
-test('rows of a repository with no base branch show no ahead and behind counts', async ($, on) => {
-  const O = { path: '/repo/.claude/worktrees/o', branch: 'feat-o' }
-  world(on, { '/repo': [{ path: '/repo', branch: '' }, WT, O] })
-  enters(on, WT)
-  await start($)
-  await $.tool.call({ tool: 'EnterWorktree', name: 'fix-auth' })
-
-  expect(await texts($)).toContain('● o  feat-o  1 minute ago')
-})
-
 test('a repository the person opened stays open when the order of repositories changes', async ($, on) => {
   const B1 = { path: '/other/.claude/worktrees/b1', branch: 'b1' }
   const B2 = { path: '/other/.claude/worktrees/b2', branch: 'b2' }
@@ -925,7 +949,8 @@ test('a repository the person opened stays open when the order of repositories c
 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   await ui.press({ key: 'refresh' })
-  const rows = async () => (await ui.findAll({ type: 'Text' })).map(one => one.text).filter(one => one.startsWith('● '))
+  const rows = async () =>
+    (await ui.findAll({ type: 'Text' })).map(one => one.text.trimStart()).filter(one => one.startsWith('● '))
   expect((await rows()).some(one => one.startsWith('● b2'))).toBe(false)
   await ui.press({ key: 'repo:/other' })
   expect((await rows()).some(one => one.startsWith('● b2'))).toBe(true)
@@ -1254,4 +1279,172 @@ test('a branch made by Bash after the plugin loaded counts for its worktree', as
   expect(found.filter(text => text.startsWith('PR #') && text.includes(' · '))).toEqual([
     'PR #7 merged · Made here earlier',
   ])
+})
+
+const CLEAN: Facts = {
+  exists: true,
+  branch: 'b',
+  lockIsLive: false,
+  lockIsStale: false,
+  hasProcessInside: false,
+  isUnread: false,
+  uncommittedFiles: 0,
+  commitsOnNoRemote: 0,
+  pr: 'merged',
+}
+const ONE_REASON: [string, Partial<Facts>, string, string[]][] = [
+  ['a live lock', { lockIsLive: true }, 'in-use', ['live-lock']],
+  ['a process inside', { hasProcessInside: true }, 'in-use', ['process-inside']],
+  ['a gone folder', { exists: false, pr: 'none' }, 'can-be-removed', ['folder-gone']],
+  [
+    'a gone folder with commits on no remote',
+    { exists: false, commitsOnNoRemote: 1 },
+    'needs-a-look',
+    ['folder-gone', 'commits-on-no-remote'],
+  ],
+  ['a gone folder git could not read', { exists: false, isUnread: true }, 'needs-a-look', ['folder-gone', 'unread']],
+  ['a fact that could not be read', { isUnread: true }, 'needs-a-look', ['unread']],
+  ['uncommitted files', { uncommittedFiles: 2 }, 'needs-a-look', ['uncommitted-files']],
+  ['commits on no remote', { commitsOnNoRemote: 1 }, 'needs-a-look', ['commits-on-no-remote']],
+  ['a branch with no PR', { pr: 'none' }, 'needs-a-look', ['no-pr']],
+  ['PR state unknown', { pr: 'unknown' }, 'needs-a-look', ['pr-unknown']],
+  ['no branch, nothing to lose', { branch: null, pr: 'none' }, 'can-be-removed', ['detached-on-remote']],
+  ['no branch, uncommitted files', { branch: null, uncommittedFiles: 1 }, 'needs-a-look', ['uncommitted-files']],
+  ['an open PR', { pr: 'open' }, 'pr-open', []],
+  ['a merged PR', { pr: 'merged' }, 'can-be-removed', ['pr-merged']],
+  ['a closed PR', { pr: 'closed' }, 'can-be-removed', ['pr-closed']],
+  ['a stale lock on a clean merged worktree', { lockIsStale: true }, 'can-be-removed', ['pr-merged']],
+]
+
+test('groupOf puts each fact in the worktrees mod group', () => {
+  for (const [, facts, group, reasons] of ONE_REASON)
+    expect(groupOf({ ...CLEAN, ...facts })).toEqual({ group, reasons })
+  for (const sign of [{ lockIsLive: true }, { hasProcessInside: true }])
+    expect(groupOf({ ...CLEAN, ...sign, uncommittedFiles: 3, isUnread: true }).group).toBe('in-use')
+  const atRisk: Partial<Facts>[] = [
+    { uncommittedFiles: 1 },
+    { commitsOnNoRemote: 1 },
+    { pr: 'none' },
+    { pr: 'unknown' },
+    { isUnread: true },
+    { branch: null, commitsOnNoRemote: 1 },
+  ]
+  for (const facts of atRisk) expect(groupOf({ ...CLEAN, ...facts }).group).toBe('needs-a-look')
+})
+
+const otherLines = async ($: Dollar) =>
+  (await texts($, { ...PANE.props, bodyColumns: 80 })).filter(one => /^ {2}(● |\S.* · \d+$)|^ {6}\S/.test(one))
+
+test('other worktrees are grouped as the worktrees mod grouped them, each row with its PR', async ($, on) => {
+  const at = (name: string, branch: string) => ({ path: `/repo/.claude/worktrees/${name}`, branch })
+  const [A, B, C, D, E, F, G] = [
+    at('merged-clean', 'feat-a'),
+    at('open-pr', 'feat-b'),
+    at('dirty', 'feat-c'),
+    at('unpushed', 'feat-d'),
+    at('busy', 'feat-e'),
+    at('moved-on', 'feat-f'),
+    at('colleague', 'feat-g'),
+  ]
+  const w = world(on, { '/repo': [MAIN, WT, A, B, C, D, E, F, G] })
+  w.per[C.path] = { status: ' M x' }
+  w.per[D.path] = { unpushed: '2' }
+  w.lsof = `p1\ncnode\nn/\np2\nczsh\nn${E.path}/src`
+  w.pulls = {
+    'feat-a': [{ number: 11, state: 'MERGED', title: 'a', headRefOid: 'a' }],
+    'feat-b': [{ number: 12, state: 'OPEN', title: 'b', headRefOid: 'old' }],
+    'feat-c': [{ number: 13, state: 'MERGED', title: 'c', headRefOid: 'a' }],
+    'feat-f': [{ number: 14, state: 'MERGED', title: 'f', headRefOid: 'before' }],
+    'feat-g': [{ number: 15, state: 'OPEN', title: 'g', headRefOid: 'a', author: { login: 'someone-else' } }],
+  }
+  enters(on, WT)
+  await start($)
+  await $.tool.call({ tool: 'EnterWorktree', name: 'fix-auth' })
+
+  const found = await texts($, { ...PANE.props, bodyColumns: 80 })
+  expect(found).toContain('1 can be removed · 2 PR open · 3 need a look · 1 in use')
+  expect(await otherLines($)).toEqual([
+    '  Can be removed · 1',
+    '  ● merged-clean  feat-a  PR #11 merged     0 d',
+    '  PR open · 2',
+    '  ● colleague     feat-g  PR #15 open       0 d',
+    '  ● open-pr       feat-b  PR #12 open       0 d',
+    '  Needs a look · 3',
+    '  ● dirty         feat-c  PR #13 merged     0 d',
+    '      1 uncommitted file',
+    '  ● moved-on      feat-f  no PR             0 d',
+    '  ● unpushed      feat-d  no PR             0 d',
+    '      2 commits on no remote',
+    '  In use · 1',
+    '  ● busy          feat-e  no PR             0 d',
+    '      a process runs inside',
+  ])
+})
+
+test('a fact that cannot be read puts the row in Needs a look', async ($, on) => {
+  const S = { path: '/repo/.claude/worktrees/no-status', branch: 'feat-s' }
+  const R = { path: '/repo/.claude/worktrees/no-remotes', branch: 'feat-r' }
+  const w = world(on, { '/repo': [MAIN, WT, S, R] })
+  w.per[S.path] = { fail: 'status' }
+  w.per[R.path] = { fail: 'rev-list' }
+  w.pulls = {
+    'feat-s': [{ number: 1, state: 'MERGED', title: 's', headRefOid: 'a' }],
+    'feat-r': [{ number: 2, state: 'MERGED', title: 'r', headRefOid: 'a' }],
+  }
+  enters(on, WT)
+  await start($)
+  await $.tool.call({ tool: 'EnterWorktree', name: 'fix-auth' })
+
+  const unread = '      git or the process list could not be read'
+  expect(await otherLines($)).toEqual([
+    '  Needs a look · 2',
+    '  ● no-remotes  feat-r  PR #2 merged      0 d',
+    unread,
+    '  ● no-status   feat-s  PR #1 merged      0 d',
+    unread,
+  ])
+  w.per = {}
+  w.lsof = null
+  expect((await otherLines($)).filter(one => one === unread).length).toBe(2)
+  w.lsof = undefined
+  w.isLsofCut = true
+  expect((await otherLines($)).filter(one => one === unread).length).toBe(2)
+  w.isLsofCut = false
+  expect(await otherLines($)).toContain('  Can be removed · 2')
+})
+
+test('a lock of a running session puts a row in use; a lock left by a stopped session does not', async ($, on) => {
+  const LIVE = {
+    path: '/repo/.claude/worktrees/live',
+    branch: 'l',
+    lock: 'claude session x (pid 500 start Tue Nov 17 07:00:00 2026)',
+  }
+  const LEFT = {
+    path: '/repo/.claude/worktrees/left',
+    branch: 'f',
+    lock: 'claude session y (pid 501 start Tue Nov 17 07:00:00 2026)',
+  }
+  const HAND = { path: '/repo/.claude/worktrees/hand', branch: 'h', lock: 'kept for a demo' }
+  const w = world(on, { '/repo': [MAIN, WT, LIVE, LEFT, HAND] })
+  w.processes = { 500: 'Tue Nov 17  07:00:00 2026' }
+  w.lsof = `p9\ncgit\nn${LEFT.path}\np10\nclsof\nn${LEFT.path}/x`
+  w.pulls = Object.fromEntries(
+    ['l', 'f', 'h'].map(b => [b, [{ number: 3, state: 'MERGED', title: b, headRefOid: 'a' }]]),
+  )
+  enters(on, WT)
+  await start($)
+  await $.tool.call({ tool: 'EnterWorktree', name: 'fix-auth' })
+
+  expect(await otherLines($)).toEqual([
+    '  Can be removed · 1',
+    '  ● left  f  PR #3 merged      0 d',
+    '      lock left by a stopped session',
+    '  In use · 2',
+    '  ● hand  h  PR #3 merged      0 d',
+    '      locked by a running session',
+    '  ● live  l  PR #3 merged      0 d',
+    '      locked by a running session',
+  ])
+  w.processes = null
+  expect(await otherLines($)).toContain('  In use · 3')
 })

@@ -33,11 +33,14 @@ export type Row = {
   path: string
   repo: string
   branch?: string
+  head?: string
   isGone: boolean
-  ahead?: number
-  behind?: number
   dirty?: number
-  age?: string
+  unpushed?: number
+  lock?: 'live' | 'stale'
+  hasProcess?: boolean
+  isUnread?: boolean
+  committedAt?: number
 }
 
 export type AgentBadge = {
@@ -60,7 +63,7 @@ export type Grove = {
   agents: Record<string, AgentBadge>
 }
 
-export type Pull = { number: number; state: 'open' | 'merged' | 'closed'; title: string }
+export type Pull = { number: number; state: 'open' | 'merged' | 'closed'; title: string; head: string; isMine: boolean }
 export type Pulls = { byPath: Record<string, Pull[]>; unknown: string[]; at: number }
 
 declare module 'claude-code' {

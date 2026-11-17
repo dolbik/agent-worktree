@@ -1,6 +1,6 @@
 import type { Tracked } from '../types'
 
-export type Listed = { path: string; branch?: string; lock?: string }
+export type Listed = { path: string; branch?: string; head?: string; lock?: string }
 
 export const parseWorktreeList = (porcelain: string): Listed[] =>
   porcelain
@@ -12,6 +12,7 @@ export const parseWorktreeList = (porcelain: string): Listed[] =>
       return {
         path: block.match(/^worktree (.*)$/m)?.[1] ?? '',
         branch: block.match(/^branch refs\/heads\/(.*)$/m)?.[1],
+        head: block.match(/^HEAD (.*)$/m)?.[1],
         lock: locked ? (locked[1] ?? '') : undefined,
       }
     })
@@ -21,6 +22,27 @@ export const parseLock = (text: string) => {
 
   return found ? { pid: Number(found[1]), startedAt: (found[2] ?? '').trim() } : null
 }
+
+// folders processes run in, from `lsof -Fpcn`; git and lsof are left out, as every session's scan runs them in worktrees
+export const processFolders = (lsof: string) => {
+  const folders = new Set<string>()
+  let command = ''
+  for (const line of lsof.split('\n')) {
+    if (line.startsWith('p')) command = ''
+    else if (line.startsWith('c')) command = line.slice(1)
+    else if (line.startsWith('n') && command !== 'git' && command !== 'lsof') folders.add(line.slice(1))
+  }
+
+  return [...folders]
+}
+
+export const startsOf = (ps: string) =>
+  new Map(
+    ps
+      .split('\n')
+      .map(line => /^\s*(\d+)\s+(.+?)\s*$/.exec(line))
+      .flatMap(found => (found ? [[Number(found[1]), found[2] ?? ''] as const] : [])),
+  )
 
 export const isInside = (dir: string, path: string) => dir === path || dir.startsWith(`${path}/`)
 

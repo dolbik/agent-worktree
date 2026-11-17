@@ -8,12 +8,12 @@ const tracked = atom({ plugin: 'agent-worktree', key: 'tracked' } as const, [], 
 const grove = atom(
   { plugin: 'agent-worktree', key: 'grove' } as const,
   { repoOf: {}, others: [], rowsAt: 0, snaps: {}, agents: {} },
-  { shape: 'grove-7' },
+  { shape: 'grove-8' },
 )
 const pulls = atom(
   { plugin: 'agent-worktree', key: 'pulls' } as const,
   { byPath: {}, unknown: [], at: 0 },
-  { shape: 'pulls-2' },
+  { shape: 'pulls-3' },
 )
 const problems = atom({ plugin: 'agent-worktree', key: 'problems' } as const, [], { shape: 'problems-1' })
 const expanded = atom({ plugin: 'agent-worktree', key: 'expanded' } as const, [], { shape: 'expanded-1' })
@@ -119,10 +119,94 @@ export const madeBy = (one: Tracked, now: number) => {
   return `${one.how === 'entered' ? 'entered by' : 'made by'} ${who}${at}${how ? ` · ${how}` : ''}`
 }
 
-const rowFacts = (row: Row) =>
-  row.isGone
-    ? 'folder gone'
-    : [row.ahead === undefined ? undefined : `↑${row.ahead} ↓${row.behind}`, row.age].filter(Boolean).join(' · ')
+type Group = 'in-use' | 'needs-a-look' | 'pr-open' | 'can-be-removed'
+type Reason =
+  | 'live-lock'
+  | 'process-inside'
+  | 'folder-gone'
+  | 'unread'
+  | 'uncommitted-files'
+  | 'commits-on-no-remote'
+  | 'no-pr'
+  | 'pr-unknown'
+  | 'detached-on-remote'
+  | 'pr-merged'
+  | 'pr-closed'
+export type Facts = {
+  exists: boolean
+  branch: string | null
+  lockIsLive: boolean
+  lockIsStale: boolean
+  hasProcessInside: boolean
+  isUnread: boolean
+  uncommittedFiles: number
+  commitsOnNoRemote: number
+  pr: 'open' | 'merged' | 'closed' | 'none' | 'unknown'
+}
+
+// the worktrees mod's rule: removable only when nothing holds the worktree and nothing in it would be lost
+export function groupOf(facts: Facts): { group: Group; reasons: Reason[] } {
+  const inUse: Reason[] = []
+  if (facts.lockIsLive) inUse.push('live-lock')
+  if (facts.hasProcessInside) inUse.push('process-inside')
+  if (inUse.length > 0) return { group: 'in-use', reasons: inUse }
+
+  if (!facts.exists) {
+    const lost: Reason[] = facts.isUnread ? ['unread'] : facts.commitsOnNoRemote > 0 ? ['commits-on-no-remote'] : []
+    return lost.length > 0
+      ? { group: 'needs-a-look', reasons: ['folder-gone', ...lost] }
+      : { group: 'can-be-removed', reasons: ['folder-gone'] }
+  }
+
+  const look: Reason[] = []
+  if (facts.isUnread) look.push('unread')
+  if (facts.uncommittedFiles > 0) look.push('uncommitted-files')
+  if (facts.commitsOnNoRemote > 0) look.push('commits-on-no-remote')
+  if (facts.branch !== null && facts.pr === 'none') look.push('no-pr')
+  if (facts.branch !== null && facts.pr === 'unknown') look.push('pr-unknown')
+  if (look.length > 0) return { group: 'needs-a-look', reasons: look }
+
+  if (facts.branch === null) return { group: 'can-be-removed', reasons: ['detached-on-remote'] }
+  if (facts.pr === 'open') return { group: 'pr-open', reasons: [] }
+  return { group: 'can-be-removed', reasons: [facts.pr === 'merged' ? 'pr-merged' : 'pr-closed'] }
+}
+
+const GROUPS: { group: Group; label: string; color: string; one: string; many: string }[] = [
+  { group: 'can-be-removed', label: 'Can be removed', color: 'success', one: 'can be removed', many: 'can be removed' },
+  { group: 'pr-open', label: 'PR open', color: 'suggestion', one: 'PR open', many: 'PR open' },
+  { group: 'needs-a-look', label: 'Needs a look', color: 'warning', one: 'needs a look', many: 'need a look' },
+  { group: 'in-use', label: 'In use', color: 'subtle', one: 'in use', many: 'in use' },
+]
+const PR_REASONS: Reason[] = ['pr-merged', 'pr-closed', 'no-pr', 'pr-unknown']
+const PR_WIDTH = 16
+const DAY = 86_400_000
+
+function reasonText(row: Row, reason: Reason): string {
+  switch (reason) {
+    case 'live-lock':
+      return 'locked by a running session'
+    case 'process-inside':
+      return 'a process runs inside'
+    case 'folder-gone':
+      return 'folder is gone'
+    case 'unread':
+      return 'git or the process list could not be read'
+    case 'uncommitted-files':
+      return count(row.dirty ?? 0, 'uncommitted file', 'uncommitted files')
+    case 'commits-on-no-remote':
+      return count(row.unpushed ?? 0, 'commit on no remote', 'commits on no remote')
+    case 'no-pr':
+      return 'no PR for this branch'
+    case 'pr-unknown':
+      return 'PR state unknown'
+    case 'detached-on-remote':
+      return 'detached, every commit is on a remote'
+    case 'pr-merged':
+      return 'PR merged'
+    case 'pr-closed':
+      return 'PR closed'
+  }
+}
 
 export async function drawPane($: EngineInterface, ui: ElementTable, width: number) {
   const { Box, Text, Button } = ui
@@ -176,7 +260,7 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
     const isMerged = !!snap && !snap.isGone && !!snap.base && snap.ahead === 0 && snap.dirty === 0
     const repo = repos.length > 1 && repoOf[path] ? `${nameOf(repoOf[path])} · ` : ''
     const isOpen = open.includes(one.toolUseId)
-    const cardPulls = byPath[path] ?? []
+    const cardPulls = (byPath[path] ?? []).filter(pull => pull.isMine)
     const isPullsOpen = open.includes(`${one.toolUseId}:pulls`)
 
     return (
@@ -328,39 +412,111 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
     )
   }
 
-  const facts = others.map(rowFacts)
-  const tail = Math.max(
-    0,
-    ...others.map((row, i) => (facts[i] ?? '').length + (row.dirty ? ` · ${row.dirty} dirty`.length : 0)),
-  )
+  // the row's PR is the one opened from its HEAD, else the newest when it is open
+  const prOf = (row: Row): { state: Facts['pr']; number?: number } => {
+    if (!row.branch) return { state: 'none' }
+    const pulls = byPath[row.path]
+    if (unknown.includes(row.path) || !pulls) return { state: 'unknown' }
+    const pull = pulls.find(one => one.head === row.head) ?? (pulls[0]?.state === 'open' ? pulls[0] : undefined)
+
+    return pull ? { state: pull.state, number: pull.number } : { state: 'none' }
+  }
+  const factsOf = (row: Row): Facts => ({
+    exists: !row.isGone,
+    branch: row.branch ?? null,
+    lockIsLive: row.lock === 'live',
+    lockIsStale: row.lock === 'stale',
+    hasProcessInside: !!row.hasProcess,
+    isUnread: !!row.isUnread,
+    uncommittedFiles: row.dirty ?? 0,
+    commitsOnNoRemote: row.unpushed ?? 0,
+    pr: prOf(row).state,
+  })
+  const prText = (row: Row) => {
+    const pr = prOf(row)
+    if (!row.branch) return '—'
+    if (pr.state === 'unknown') return byPath[row.path] || unknown.includes(row.path) ? 'PR unknown' : 'PR …'
+
+    return pr.state === 'none' ? 'no PR' : `PR #${pr.number} ${pr.state}`
+  }
+  const prTextColor = (row: Row) => {
+    const { state } = prOf(row)
+
+    return state === 'merged'
+      ? 'merged'
+      : state === 'open'
+        ? 'success'
+        : state === 'none' && row.branch
+          ? 'warning'
+          : 'subtle'
+  }
+  const groups = new Map(others.map(row => [row.path, groupOf(factsOf(row))]))
+  const groupOfRow = (row: Row) => groups.get(row.path) ?? { group: 'needs-a-look' as const, reasons: [] }
+  const ageOf = (row: Row) =>
+    row.isGone
+      ? 'folder gone'
+      : row.committedAt === undefined
+        ? '—'
+        : `${Math.max(0, Math.floor((now - row.committedAt) / DAY))} d`
+  const ageWidth = Math.max(0, ...others.map(row => ageOf(row).length))
+  const tail = PR_WIDTH + 2 + ageWidth
   const longestName = Math.max(0, ...others.map(row => nameOf(row.path).length))
   const longestBranch = Math.max(0, ...others.map(row => (row.branch ?? 'detached').length))
-  const room = width - 2 - 4 - tail
+  const room = width - 4 - 4 - tail
   const nameWidth = Math.min(longestName, Math.max(12, Math.ceil(room / 2)))
   const branchWidth = Math.min(longestBranch, room - nameWidth)
   const hasBranch = longestBranch > 0 && room - nameWidth >= 12
-  const otherRow = (row: Row, i: number) => {
-    const dot = row.isGone ? 'error' : row.dirty ? 'warning' : row.ahead === 0 ? 'success' : undefined
+  const nameRoom = hasBranch ? nameWidth : Math.max(8, Math.min(longestName, room))
+  const otherRow = (row: Row) => {
+    const { group, reasons } = groupOfRow(row)
+    const isAtRisk = !!row.dirty || !!row.unpushed || group === 'needs-a-look'
+    const note = [
+      ...reasons.filter(reason => !PR_REASONS.includes(reason)).map(reason => reasonText(row, reason)),
+      ...(row.lock === 'stale' ? ['lock left by a stopped session'] : []),
+    ].join(' · ')
 
-    return (
+    return [
       <Text key={`row:${row.path}`} wrap="truncate-end">
-        <Text color={dot} dimColor={dot === undefined}>
-          ●
-        </Text>
-        {` ${fit(nameOf(row.path), hasBranch ? nameWidth : width - 6 - tail).padEnd(hasBranch ? nameWidth : 0)}  `}
+        {'  '}
+        <Text color={row.isGone ? 'subtle' : isAtRisk ? 'warning' : 'success'}>●</Text>
+        {` ${fit(nameOf(row.path), nameRoom).padEnd(nameRoom)}  `}
         {hasBranch && <Text dimColor>{`${fit(row.branch ?? 'detached', branchWidth).padEnd(branchWidth)}  `}</Text>}
-        <Text color={row.isGone ? 'error' : undefined} dimColor={!row.isGone}>
-          {facts[i]}
-        </Text>
-        {!!row.dirty && (
-          <Text>
-            <Text dimColor> · </Text>
-            <Text color="warning">{row.dirty} dirty</Text>
-          </Text>
-        )}
-      </Text>
-    )
+        <Text color={prTextColor(row)}>{prText(row).padEnd(PR_WIDTH)}</Text>
+        <Text dimColor>{`  ${ageOf(row).padStart(ageWidth)}`}</Text>
+      </Text>,
+      ...(note
+        ? [
+            <Text
+              key={`note:${row.path}`}
+              wrap="truncate-end"
+              color={group === 'needs-a-look' ? 'warning' : undefined}
+              dimColor={group !== 'needs-a-look'}
+            >
+              {`      ${note}`}
+            </Text>,
+          ]
+        : []),
+    ]
   }
+  const tally = (rows: Row[]) =>
+    GROUPS.map(one => ({ ...one, n: rows.filter(row => groupOfRow(row).group === one.group).length }))
+      .filter(one => one.n > 0)
+      .map((one, i) => (
+        <Text color={one.color}>{`${i > 0 ? ' · ' : ''}${one.n} ${one.n === 1 ? one.one : one.many}`}</Text>
+      ))
+  const groupLines = (rows: Row[]) =>
+    GROUPS.flatMap(({ group, label, color }) => {
+      const mine = rows
+        .filter(row => groupOfRow(row).group === group)
+        .sort((a, b) => nameOf(a.path).localeCompare(nameOf(b.path)))
+
+      return mine.length === 0
+        ? []
+        : [
+            <Text key={`group:${rows[0]?.repo}:${group}`} color={color}>{`  ${label} · ${mine.length}`}</Text>,
+            ...mine.flatMap(otherRow),
+          ]
+    })
   const otherRepos = [...new Set(others.map(row => row.repo))]
   const otherLines = otherRepos.flatMap((repo, index) => {
     const rows = others.filter(row => row.repo === repo)
@@ -369,8 +525,6 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
     // a choice is stored as open or closed, so it holds when the order of repositories changes
     const isShown =
       !isFolding || (open.includes(`${key}:open`) ? true : open.includes(`${key}:closed`) ? false : index === 0)
-    const dirty = rows.filter(row => row.dirty).length
-    const order = [...rows].sort((a, b) => Number(!!b.dirty) - Number(!!a.dirty))
     const header = isFolding ? (
       <Box key={key} flexDirection="row">
         <Text dimColor>{isShown ? '▾ ' : '▸ '}</Text>
@@ -386,14 +540,17 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
           {nameOf(repo)}
         </Button>
         <Text wrap="truncate-end">
-          <Text dimColor>{`  ${count(rows.length, 'worktree', 'worktrees')}`}</Text>
-          {dirty > 0 && <Text dimColor> · </Text>}
-          {dirty > 0 && <Text color="warning">{dirty} dirty</Text>}
+          {'  '}
+          {tally(rows)}
         </Text>
       </Box>
-    ) : undefined
+    ) : (
+      <Text key={key} wrap="truncate-end">
+        {tally(rows)}
+      </Text>
+    )
 
-    return [...(header ? [header] : []), ...(isShown ? order.map(row => otherRow(row, others.indexOf(row))) : [])]
+    return [header, ...(isShown ? groupLines(rows) : [])]
   })
 
   return (

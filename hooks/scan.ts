@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { AgentInfo, EngineInterface } from 'claude-code'
 
 import type { AgentBadge, FileChange, Problem, Pull, Row, Snap, Tracked } from '../types'
-import { deepest, isInside, jsonOf, parseLock, parseWorktreeList } from './detect'
+import { deepest, isInside, jsonOf, parseLock, parseWorktreeList, processFolders, startsOf } from './detect'
 import type { Listed, Made } from './detect'
 import { madeBefore } from './history'
 
@@ -18,12 +18,12 @@ const tracked = atom({ plugin: 'agent-worktree', key: 'tracked' } as const, [], 
 const grove = atom(
   { plugin: 'agent-worktree', key: 'grove' } as const,
   { repoOf: {}, others: [], rowsAt: 0, snaps: {}, agents: {} },
-  { shape: 'grove-7' },
+  { shape: 'grove-8' },
 )
 const pulls = atom(
   { plugin: 'agent-worktree', key: 'pulls' } as const,
   { byPath: {}, unknown: [], at: 0 },
-  { shape: 'pulls-2' },
+  { shape: 'pulls-3' },
 )
 const problems = atom({ plugin: 'agent-worktree', key: 'problems' } as const, [], {
   shape: 'problems-1',
@@ -107,22 +107,78 @@ async function snapOf($: EngineInterface, path: string, base?: string): Promise<
   }
 }
 
-async function rowOf($: EngineInterface, one: Listed & { repo: string }, base?: string): Promise<Row> {
-  if (!(await $.fs.exists(one.path))) return { path: one.path, repo: one.repo, branch: one.branch, isGone: true }
-  const [changes, counts, age] = await Promise.all([
-    status($, one.path),
-    countsOf($, one.path, base),
-    git($, one.path, 'log', '-1', '--format=%cr'),
-  ])
+type InUse = { folders?: string[]; starts?: Map<number, string> }
 
-  return {
+const countOf = (text?: string) => {
+  const n = Number(text?.trim() || Number.NaN)
+
+  return Number.isInteger(n) ? n : undefined
+}
+
+// an unreadable lock, or one whose process cannot be checked, counts as live
+const lockOf = (text: string, starts?: Map<number, string>): Row['lock'] => {
+  const lock = parseLock(text)
+
+  return !lock || !starts || sameText(starts.get(lock.pid) ?? '', lock.startedAt) ? 'live' : 'stale'
+}
+
+async function rowOf($: EngineInterface, one: Listed & { repo: string }, use: InUse) {
+  const shared = {
     path: one.path,
     repo: one.repo,
     branch: one.branch,
+    head: one.head,
+    lock: one.lock === undefined ? undefined : lockOf(one.lock, use.starts),
+  }
+  if (!(await $.fs.exists(one.path))) {
+    const unpushed = one.head
+      ? countOf(await git($, one.repo, 'rev-list', '--count', one.head, '--not', '--remotes'))
+      : 0
+
+    return { ...shared, isGone: true, unpushed, isUnread: unpushed === undefined }
+  }
+  const [changes, committed, unpushed] = await Promise.all([
+    status($, one.path),
+    git($, one.path, 'log', '-1', '--format=%ct'),
+    git($, one.path, 'rev-list', '--count', 'HEAD', '--not', '--remotes').then(countOf),
+  ])
+  const seconds = countOf(committed)
+
+  return {
+    ...shared,
     isGone: false,
-    ...counts,
-    dirty: lines(changes).length,
-    age,
+    dirty: changes === undefined ? undefined : lines(changes).length,
+    unpushed,
+    hasProcess: use.folders?.some(folder => isInside(folder, one.path)),
+    isUnread: changes === undefined || unpushed === undefined || use.folders === undefined,
+    committedAt: seconds === undefined ? undefined : seconds * 1000,
+  }
+}
+
+async function startsAt($: EngineInterface, pids: number[]) {
+  if (pids.length === 0) return new Map<number, string>()
+  try {
+    const argv = ['ps', '-o', 'pid=,lstart=', '-p', [...new Set(pids)].join(',')]
+    const ps = await $.process.run(argv, { env: { TZ: 'UTC', LC_ALL: 'C' } })
+
+    return startsOf(ps.stdout)
+  } catch {
+    return undefined
+  }
+}
+
+// what holds a worktree another session may be using: a process standing inside it, or a lock of a running session
+async function inUseOf($: EngineInterface, listed: Listed[]): Promise<InUse> {
+  const lsof = await $.process.run(['lsof', '-a', '-d', 'cwd', '-Fpcn']).catch(() => undefined)
+  const folders = lsof?.stdout && !lsof.isStdoutTruncated ? processFolders(lsof.stdout) : undefined
+  const locks = listed.flatMap(one => (one.lock ? [parseLock(one.lock)?.pid ?? 0] : []))
+
+  return {
+    folders,
+    starts: await startsAt(
+      $,
+      locks.filter(pid => pid > 0),
+    ),
   }
 }
 
@@ -379,13 +435,15 @@ async function refreshNow($: EngineInterface, isFull: boolean) {
   const repoOfDir = (dir: string) => [...lists].find(([, entries]) => entries.some(one => isInside(dir, one.path)))?.[0]
   const shown = new Set([repoOfDir(sessionDir), ...ownPaths.map(path => repoOf[path])])
   const others = listed.filter(one => shown.has(one.repo) && !ownPaths.includes(one.path))
-  const isStale = isFull || now - previous.rowsAt >= ROWS_EVERY
+  const isPaneSeen = now - paneDrawnAt < PANE_SEEN
+  const isStale = isFull || (isPaneSeen && now - previous.rowsAt >= ROWS_EVERY)
   const cached = new Map(previous.others.map(row => [row.path, row]))
+  const use = isStale ? await inUseOf($, others) : {}
   const rows = await Promise.all(
     others.map(async one => {
       const row = cached.get(one.path)
 
-      return !isStale && row ? { ...row, branch: one.branch } : rowOf($, one, bases[one.repo])
+      return !isStale && row ? { ...row, branch: one.branch } : rowOf($, one, use)
     }),
   )
 
@@ -397,21 +455,26 @@ async function refreshNow($: EngineInterface, isFull: boolean) {
     agents: Object.fromEntries(Object.entries(badges).filter(([path]) => ownPaths.includes(path))),
   }))
   // PR rows are only drawn in the pane, so GitHub is asked once a minute only while it is open
-  const isPullsStale = now - paneDrawnAt < PANE_SEEN && now - (await read($, pulls)).at >= ROWS_EVERY
-  if (isFull || isPullsStale) void lookUpPulls($, branches, repoOf, now)
+  const isPullsStale = isPaneSeen && now - (await read($, pulls)).at >= ROWS_EVERY
+  const rowBranches = Object.fromEntries(
+    rows
+      .filter(row => !row.isGone)
+      .map(row => [row.path, row.branch && row.branch !== bases[row.repo] ? [row.branch] : []]),
+  )
+  if (isFull || isPullsStale) void lookUpPulls($, { ...rowBranches, ...branches }, repoOf, now)
 }
 
 const stateOf = (state: string): Pull['state'] => (state === 'OPEN' ? 'open' : state === 'MERGED' ? 'merged' : 'closed')
 
-// PRs this gh account opened from the branches, read from GitHub; undefined when gh cannot answer
+// PRs from the branches, newest first, marked when this gh account opened them; undefined when gh cannot answer
 async function pullsOf($: EngineInterface, repo: string, branches: string[]) {
   const fields = branches.map(
     (branch, i) =>
-      `b${i}: pullRequests(headRefName: ${JSON.stringify(branch)}, first: 3, orderBy: {field: CREATED_AT, direction: DESC}) { nodes { number state title author { login } } }`,
+      `b${i}: pullRequests(headRefName: ${JSON.stringify(branch)}, first: 10, orderBy: {field: CREATED_AT, direction: DESC}) { nodes { number state title headRefOid author { login } } }`,
   )
   const query = `query($owner: String!, $name: String!) { viewer { login } repository(owner: $owner, name: $name) { ${fields.join(' ')} } }`
   const argv = ['gh', 'api', 'graphql', '-F', 'owner={owner}', '-F', 'name={repo}', '-f', `query=${query}`]
-  type Node = { number: number; state: string; title: string; author?: { login?: string } | null }
+  type Node = { number: number; state: string; title: string; headRefOid: string; author?: { login?: string } | null }
   type Answer = { data?: { viewer?: { login?: string }; repository?: Record<string, { nodes?: Node[] } | null> } }
   const data = jsonOf<Answer>((await output($, argv, repo, 10_000)) ?? '')?.data
   const me = data?.viewer?.login
@@ -420,9 +483,13 @@ async function pullsOf($: EngineInterface, repo: string, branches: string[]) {
   return Object.fromEntries(
     branches.map((branch, i) => [
       branch,
-      (data.repository?.[`b${i}`]?.nodes ?? [])
-        .filter(node => node.author?.login === me)
-        .map(node => ({ number: node.number, state: stateOf(node.state), title: node.title })),
+      (data.repository?.[`b${i}`]?.nodes ?? []).map(node => ({
+        number: node.number,
+        state: stateOf(node.state),
+        title: node.title,
+        head: node.headRefOid,
+        isMine: node.author?.login === me,
+      })),
     ]),
   )
 }
