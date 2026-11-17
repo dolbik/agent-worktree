@@ -412,12 +412,14 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
     )
   }
 
-  // the row's PR is the one opened from its HEAD, else the newest when it is open
+  // the row's PR is one opened from its HEAD, an open one first, else the newest when it is open
   const prOf = (row: Row): { state: Facts['pr']; number?: number } => {
     if (!row.branch) return { state: 'none' }
     const pulls = byPath[row.path]
     if (unknown.includes(row.path) || !pulls) return { state: 'unknown' }
-    const pull = pulls.find(one => one.head === row.head) ?? (pulls[0]?.state === 'open' ? pulls[0] : undefined)
+    const onHead = pulls.filter(one => one.head === row.head)
+    const pull =
+      onHead.find(one => one.state === 'open') ?? onHead[0] ?? (pulls[0]?.state === 'open' ? pulls[0] : undefined)
 
     return pull ? { state: pull.state, number: pull.number } : { state: 'none' }
   }

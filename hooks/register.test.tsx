@@ -1381,6 +1381,22 @@ test('other worktrees are grouped as the worktrees mod grouped them, each row wi
   ])
 })
 
+test('an open PR from the row’s HEAD wins over a merged one from the same commit', async ($, on) => {
+  const B = { path: '/repo/.claude/worktrees/two-prs', branch: 'feat-two' }
+  const w = world(on, { '/repo': [MAIN, WT, B] })
+  w.pulls = {
+    'feat-two': [
+      { number: 12, state: 'MERGED', title: 'into release', headRefOid: 'a' },
+      { number: 10, state: 'OPEN', title: 'into main', headRefOid: 'a' },
+    ],
+  }
+  enters(on, WT)
+  await start($)
+  await $.tool.call({ tool: 'EnterWorktree', name: 'fix-auth' })
+
+  expect(await otherLines($)).toEqual(['  PR open · 1', '  ● two-prs  feat-two  PR #10 open       0 d'])
+})
+
 test('a fact that cannot be read puts the row in Needs a look', async ($, on) => {
   const S = { path: '/repo/.claude/worktrees/no-status', branch: 'feat-s' }
   const R = { path: '/repo/.claude/worktrees/no-remotes', branch: 'feat-r' }
