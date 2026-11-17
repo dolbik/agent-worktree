@@ -26,8 +26,8 @@ Claude Code mod (function-hook plugin): a pane listing the git worktrees the cur
   go to `problems`; `/worktrees` opens the pane.
 - `hooks/scan.ts`: `refresh` (every 5 s from `session.start`) lists the worktrees of every repository the session
   touches, matches locks to this session's process, claims worktrees its agents work in (innermost folder wins),
-  snapshots this session's worktrees, reads other worktrees once a minute, toasts finished agents. Once a minute,
-  beside the refresh queue, it reads the PRs of the branches made in each of this session's worktrees with `gh`.
+  snapshots this session's worktrees, reads other worktrees once a minute, toasts finished agents. Once a minute
+  while the pane is open, beside the refresh queue, it reads the PRs of each worktree's branches with `gh`.
 - `hooks/pane.tsx`: the pane (THIS SESSION cards, PROBLEMS IN THIS SESSION, OTHER WORKTREES rows) and the band.
 - `hooks/detect.ts`: pure parsing: `git worktree add` in a Bash command, `worktree list --porcelain`, lock text,
   transcript lines.

@@ -61,7 +61,8 @@ bar, last commit and sparkline, and shortens its buttons.
   card says who made it and when, and lists the PRs your `gh` account opened
   from the branches made in its worktree or checked out there now
   (`PR #180 merged · title`, newest first, five at most), read from GitHub once
-  a minute; without `gh` or a GitHub remote there are none. The newest worktree comes first; one the session removed stays, marked
+  a minute while the pane is open; when `gh` cannot answer, the card says
+  `PR unknown`. The newest worktree comes first; one the session removed stays, marked
   `removed`. A worktree stays here after its agent ends. The worktree the
   session is in is marked `★ here`.
 - **Problems in this session**: one line per failed worktree call (a refused

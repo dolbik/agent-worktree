@@ -10,6 +10,7 @@ export const PANE = 'agent-worktree'
 export const ACTIVE = ['pending', 'running', 'waiting']
 export const ENDED = ['completed', 'failed', 'killed']
 const ROWS_EVERY = 60_000
+const PANE_SEEN = 120_000
 
 const tracked = atom({ plugin: 'agent-worktree', key: 'tracked' } as const, [], {
   shape: 'tracked-2',
@@ -19,7 +20,11 @@ const grove = atom(
   { repoOf: {}, others: [], rowsAt: 0, snaps: {}, agents: {} },
   { shape: 'grove-7' },
 )
-const pulls = atom({ plugin: 'agent-worktree', key: 'pulls' } as const, { byPath: {}, at: 0 }, { shape: 'pulls-1' })
+const pulls = atom(
+  { plugin: 'agent-worktree', key: 'pulls' } as const,
+  { byPath: {}, unknown: [], at: 0 },
+  { shape: 'pulls-2' },
+)
 const problems = atom({ plugin: 'agent-worktree', key: 'problems' } as const, [], {
   shape: 'problems-1',
 })
@@ -126,7 +131,10 @@ let isHistoryRead = false
 const madeBranches: Made[] = []
 let isLooking = false
 
+let paneDrawnAt = 0
+
 export const noteBranches = (made: Made[]) => void madeBranches.push(...made)
+export const notePaneDrawn = (at: number) => void (paneDrawnAt = at)
 
 // Claude Code locks a worktree it makes with `claude session <name> (pid <its pid> start <its start, UTC>)`
 async function ownProcess($: EngineInterface) {
@@ -388,7 +396,9 @@ async function refreshNow($: EngineInterface, isFull: boolean) {
     snaps,
     agents: Object.fromEntries(Object.entries(badges).filter(([path]) => ownPaths.includes(path))),
   }))
-  if (isFull || now - (await read($, pulls)).at >= ROWS_EVERY) void lookUpPulls($, branches, repoOf, now)
+  // PR rows are only drawn in the pane, so GitHub is asked once a minute only while it is open
+  const isPullsStale = now - paneDrawnAt < PANE_SEEN && now - (await read($, pulls)).at >= ROWS_EVERY
+  if (isFull || isPullsStale) void lookUpPulls($, branches, repoOf, now)
 }
 
 const stateOf = (state: string): Pull['state'] => (state === 'OPEN' ? 'open' : state === 'MERGED' ? 'merged' : 'closed')
@@ -428,18 +438,21 @@ async function lookUpPulls(
   isLooking = true
   try {
     const byPath: Record<string, Pull[]> = {}
-    const paths = Object.keys(branches).filter(path => (branches[path] ?? []).length > 0)
+    const unknown: string[] = []
+    const paths = Object.keys(branches)
     for (const repo of new Set(paths.map(path => repoOf[path] ?? ''))) {
       const mine = paths.filter(path => (repoOf[path] ?? '') === repo)
-      const found = repo ? await pullsOf($, repo, [...new Set(mine.flatMap(path => branches[path] ?? []))]) : undefined
+      const asked = [...new Set(mine.flatMap(path => branches[path] ?? []))]
+      const found = asked.length === 0 ? {} : repo ? await pullsOf($, repo, asked) : undefined
       for (const path of mine)
-        if (found)
+        if (!found) unknown.push(path)
+        else
           byPath[path] = (branches[path] ?? [])
             .flatMap(branch => found[branch] ?? [])
             .sort((a, b) => b.number - a.number)
     }
-    // a worktree that is gone, or that gh could not answer for, keeps the PRs last read
-    await update($, pulls, was => ({ byPath: { ...was.byPath, ...byPath }, at: now }))
+    // a removed worktree, or one gh could not answer for, keeps the PRs last read
+    await update($, pulls, was => ({ byPath: { ...was.byPath, ...byPath }, unknown, at: now }))
   } catch {
     // no PR rows this time; the next lookup tries again
   } finally {

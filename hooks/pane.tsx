@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { ElementTable, EngineInterface } from 'claude-code'
 
 import type { Problem, Pull, Row, Snap, Tracked } from '../types'
-import { ACTIVE, PANE, liveTracked, nameOf, refresh } from './scan'
+import { ACTIVE, PANE, liveTracked, nameOf, notePaneDrawn, refresh } from './scan'
 
 const tracked = atom({ plugin: 'agent-worktree', key: 'tracked' } as const, [], { shape: 'tracked-2' })
 const grove = atom(
@@ -10,7 +10,11 @@ const grove = atom(
   { repoOf: {}, others: [], rowsAt: 0, snaps: {}, agents: {} },
   { shape: 'grove-7' },
 )
-const pulls = atom({ plugin: 'agent-worktree', key: 'pulls' } as const, { byPath: {}, at: 0 }, { shape: 'pulls-1' })
+const pulls = atom(
+  { plugin: 'agent-worktree', key: 'pulls' } as const,
+  { byPath: {}, unknown: [], at: 0 },
+  { shape: 'pulls-2' },
+)
 const problems = atom({ plugin: 'agent-worktree', key: 'problems' } as const, [], { shape: 'problems-1' })
 const expanded = atom({ plugin: 'agent-worktree', key: 'expanded' } as const, [], { shape: 'expanded-1' })
 
@@ -126,8 +130,9 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
   const { repoOf, others, snaps, agents } = await read($, grove)
   const failed = await read($, problems)
   const open = await read($, expanded)
-  const { byPath } = await read($, pulls)
+  const { byPath, unknown } = await read($, pulls)
   const now = await $.clock.now()
+  notePaneDrawn(now)
   const isNarrow = width < 60
   const live = liveTracked(list)
   const overlaps = overlapsOf(
@@ -251,6 +256,7 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
           </Text>
         ))}
         {cardPulls.length > PULLS_SHOWN && <Text dimColor>+{cardPulls.length - PULLS_SHOWN} more PRs</Text>}
+        {cardPulls.length === 0 && unknown.includes(path) && <Text dimColor>PR unknown</Text>}
         {agent && (
           <Text wrap="truncate-end" dimColor={!isActive}>
             <Text color={isActive ? 'success' : undefined}>●</Text> {agent.status}

@@ -1142,7 +1142,7 @@ test('a card shows five PRs and counts the rest', async ($, on) => {
   expect(found).toContain('+2 more PRs')
 })
 
-test('without gh no PR rows are drawn and nothing is reported', async ($, on) => {
+test('without gh a card says PR unknown and nothing is reported', async ($, on) => {
   const W = { path: '/repo/.claude/worktrees/setup', branch: 'fix/now' }
   const w = world(on, { '/repo': [MAIN, W] })
   w.files['/t/s.jsonl'] = bashLine('/repo', '2026-10-28T12:30:00.000Z', 'git worktree add .claude/worktrees/setup')
@@ -1153,6 +1153,7 @@ test('without gh no PR rows are drawn and nothing is reported', async ($, on) =>
   const found = await texts($)
   expect(found).toContain('THIS SESSION  1 worktree')
   expect(found.some(text => text.startsWith('PR #'))).toBe(false)
+  expect(found).toContain('PR unknown')
   expect(found.some(text => text.includes('PROBLEMS'))).toBe(false)
 })
 
@@ -1213,6 +1214,9 @@ test('a card keeps PRs only of its branches opened by this gh account, and keeps
   W.branch = 'feature/other'
   await texts($)
   expect(await rows()).toEqual(['PR #50 open · Looked at only'])
+  W.branch = 'main'
+  await texts($)
+  expect(await rows()).toEqual([])
   W.branch = 'fix/now'
   await texts($)
   expect(await rows()).toEqual(['PR #180 open · Mine'])

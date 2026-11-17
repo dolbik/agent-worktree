@@ -61,7 +61,7 @@ export type Grove = {
 }
 
 export type Pull = { number: number; state: 'open' | 'merged' | 'closed'; title: string }
-export type Pulls = { byPath: Record<string, Pull[]>; at: number }
+export type Pulls = { byPath: Record<string, Pull[]>; unknown: string[]; at: number }
 
 declare module 'claude-code' {
   interface PluginState {
