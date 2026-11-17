@@ -1154,3 +1154,40 @@ test('without gh no PR rows are drawn and nothing is reported', async ($, on) =>
   expect(found.some(text => text.startsWith('PR #'))).toBe(false)
   expect(found.some(text => text.includes('PROBLEMS'))).toBe(false)
 })
+
+test('the worktree the session is in, and one found by its lock, come before older ones', async ($, on) => {
+  const OLD = { path: '/repo/.claude/worktrees/fix-auth', branch: 'old' }
+  const NEW = { path: '/repo/.claude/worktrees/new', branch: 'new' }
+  const LOCKED = {
+    path: '/repo/.claude/worktrees/locked',
+    branch: 'locked',
+    lock: 'claude session locked (pid 42 start Tue Nov 17 07:25:46 2026)',
+  }
+  const w = world(on, { '/repo': [MAIN, OLD, NEW, LOCKED] })
+  w.pid = { pid: 42, start: 'Tue Nov 17 07:25:46 2026' }
+  enters(on, OLD)
+  const made = (path: string, timestamp: string) =>
+    JSON.stringify({
+      type: 'user',
+      cwd: '/repo',
+      timestamp,
+      toolUseResult: { worktreePath: path, message: 'Created worktree' },
+    })
+  w.files['/t/s.jsonl'] = [
+    made(OLD.path, '2026-06-30T19:28:55.000Z'),
+    made(NEW.path, '2026-10-28T12:30:00.000Z'),
+    made('/repo/x', 'bad'),
+  ].join('\n')
+  await start($)
+  await texts($)
+  let found = await texts($)
+  const index = (name: string) => found.findIndex(text => text.startsWith(`⎇ ${name}`))
+  expect(index('locked')).toBeGreaterThan(-1)
+  expect(index('locked')).toBeLessThan(index('new'))
+  expect(index('new')).toBeLessThan(index('fix-auth'))
+  expect(found.some(text => text.includes('NaN'))).toBe(false)
+
+  await $.tool.call({ tool: 'EnterWorktree', name: 'fix-auth' })
+  found = await texts($)
+  expect(index('fix-auth')).toBeLessThan(index('locked'))
+})

@@ -220,6 +220,12 @@ export const jsonOf = <T>(text: string): T | undefined => {
   }
 }
 
+export const timeOf = (text: unknown) => {
+  const at = typeof text === 'string' ? Date.parse(text) : NaN
+
+  return Number.isFinite(at) ? at : undefined
+}
+
 const MAKES = /worktree add|switch -[cC]|switch --(force-)?create|checkout -[bB]/
 
 // only lines that can hold an EnterWorktree result, or a Bash command making a worktree or a branch, are parsed
@@ -237,7 +243,7 @@ const bashIn = (text: string) => {
           .map(block => String(block.input?.command ?? ''))
       : []
 
-  return { line, cwd, at: line?.timestamp ? Date.parse(line.timestamp) : undefined, commands }
+  return { line, cwd, at: timeOf(line?.timestamp), commands }
 }
 
 // worktrees a transcript's lines show being made or entered; a Bash path resolves against the line's cwd

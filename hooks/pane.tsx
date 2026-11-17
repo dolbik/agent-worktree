@@ -26,6 +26,10 @@ export function openPane($: EngineInterface) {
 
 const pullColor = (state: Pull['state']) => (state === 'open' ? 'success' : state === 'merged' ? 'merged' : 'subtle')
 
+// the worktree the session is in first, then the newest; one found by its lock has no time and counts as new
+const byRecent = (a: Tracked, b: Tracked) =>
+  Number(b.isHere) - Number(a.isHere) || (b.at ?? Number.MAX_SAFE_INTEGER) - (a.at ?? Number.MAX_SAFE_INTEGER)
+
 const isAgentMade = (one: Tracked) => one.agentId !== undefined || one.how === 'agent'
 
 const overlapsOf = (snaps: Record<string, Snap>, paths: string[], repoOf: Record<string, string>) =>
@@ -388,7 +392,7 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
         </Button>
       </Box>
       {list.length === 0 && <Text dimColor>No worktrees in this session yet.</Text>}
-      {[...list].sort((a, b) => (b.at ?? 0) - (a.at ?? 0)).map(card)}
+      {[...list].sort(byRecent).map(card)}
       {failed.length > 0 && <Text> </Text>}
       {failed.length > 0 &&
         heading(

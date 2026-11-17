@@ -1,6 +1,6 @@
 import type { EngineInterface } from 'claude-code'
 
-import { branchesIn, isMadeLine, jsonOf, madeIn, wholeLines } from './detect'
+import { branchesIn, isMadeLine, jsonOf, madeIn, timeOf, wholeLines } from './detect'
 import type { Found, Made } from './detect'
 
 // under the 4 MiB read cap, with room for a character cut at either edge
@@ -54,7 +54,7 @@ async function madeInFile($: EngineInterface, file: string, home: string, isMain
       path: first.cwd,
       how: 'agent',
       ...who,
-      at: typeof first.timestamp === 'string' ? Date.parse(first.timestamp) : undefined,
+      at: timeOf(first.timestamp),
       isBackground: meta?.requestShape === 'background',
     })
 
