@@ -75,6 +75,16 @@ test('a for loop over listed words is read once per word', async () => {
   expect(worktreeAdds('for d in */; do git -C "$d" worktree add c; done')).toEqual([])
   expect(worktreeAdds('for r in {a,b}; do git -C /r/$r worktree add c; done')).toEqual([])
   expect(worktreeAdds('for r in a b; do git -C /r worktree add c; done')).toEqual([{ dir: '/r', path: 'c' }])
+  expect(worktreeAdds('for a in x y; do for b in $a-1 $a-2; do git -C /r worktree add $b; done; done')).toEqual([
+    { dir: '/r', path: 'x-1' },
+    { dir: '/r', path: 'x-2' },
+    { dir: '/r', path: 'y-1' },
+    { dir: '/r', path: 'y-2' },
+  ])
+  expect(worktreeAdds('for r in a b; do select s in one; do break; done; git -C /r/$r worktree add c; done')).toEqual([
+    { dir: '/r/a', path: 'c' },
+    { dir: '/r/b', path: 'c' },
+  ])
 })
 
 test('a heredoc body is not read as a command', async () => {

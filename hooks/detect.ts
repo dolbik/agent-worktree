@@ -144,7 +144,7 @@ const doneOf = (segments: string[][], i: number) => {
   let depth = 0
   for (let j = i; j < segments.length; j++) {
     const first = segments[j]?.[0] ?? ''
-    if (['for', 'while', 'until'].includes(first)) depth++
+    if (['for', 'while', 'until', 'select'].includes(first)) depth++
     else if (first === 'done' && --depth === 0) return j
   }
 
@@ -162,11 +162,11 @@ const withLoops = (segments: string[][]): string[][] => {
       out.push(words)
       continue
     }
-    const body = withLoops(segments.slice(i + 1, end))
+    const body = segments.slice(i + 1, end)
     const variable = new RegExp(`\\$(?:\\{${name}\\}|${name}(?![A-Za-z0-9_]))`, 'g')
     const isUsed = body.some(one => one.some(word => word.search(variable) >= 0))
     for (const value of isUsed ? values : values.slice(0, 1))
-      out.push(...body.map(one => one.map(word => word.replace(variable, () => value))))
+      out.push(...withLoops(body.map(one => one.map(word => word.replace(variable, () => value)))))
     i = end
   }
 
