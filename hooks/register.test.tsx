@@ -1574,3 +1574,47 @@ test('a row that appears or moves to a new commit between the minute reads is re
   ])
   await ui.unmount()
 })
+
+test('worktrees a Bash loop makes in several repositories are this session’s, live and in the transcript', async ($, on) => {
+  const A = { path: '/r/a/.claude/worktrees/c', branch: 'feat/c' }
+  const B = { path: '/r/b/.claude/worktrees/c', branch: 'feat/c' }
+  const loop =
+    'for r in a b; do cd /r/$r || exit 1; git worktree add -q -b feat/c .claude/worktrees/c origin/main; done'
+  const w = world(on, { '/r/a': [{ path: '/r/a', branch: 'main' }], '/r/b': [{ path: '/r/b', branch: 'main' }] })
+  on('tool.call', { tool: 'Bash' }, () => {
+    w.repos['/r/a']?.push(A)
+    w.repos['/r/b']?.push(B)
+
+    return { result: { stdout: '', stderr: '', interrupted: false } as never }
+  })
+  await start($)
+  await $.tool.call({ tool: 'Bash', command: loop } as never)
+
+  const found = await texts($)
+  expect(found).toContain('THIS SESSION  2 worktrees')
+  expect(found.filter(one => one === `made by this session at ${AT} · git worktree add`).length).toBe(2)
+})
+
+test('worktrees a Bash loop made before the plugin loaded are found in the transcript', async ($, on) => {
+  const A = { path: '/r/a/.claude/worktrees/c', branch: 'feat/c' }
+  const B = { path: '/r/b/.claude/worktrees/c', branch: 'feat/c' }
+  const w = world(on, {
+    '/r/a': [{ path: '/r/a', branch: 'main' }, A],
+    '/r/b': [{ path: '/r/b', branch: 'main' }, B],
+  })
+  const at = '2026-11-18T11:03:09.000Z'
+  w.files['/t/s.jsonl'] = bashLine(
+    '/somewhere',
+    at,
+    'for r in a b; do cd /r/$r || exit 1; git worktree add -q -b feat/c .claude/worktrees/c origin/main; done',
+  )
+  w.mtimes[`${A.path}/.git`] = Date.parse(at) + 2000
+  w.mtimes[`${B.path}/.git`] = Date.parse(at) + 4000
+  await start($, '/somewhere')
+
+  const found = await texts($)
+  expect(found).toContain('THIS SESSION  2 worktrees')
+  expect(
+    found.filter(one => one.startsWith('made by this session at ') && one.endsWith(' · git worktree add')).length,
+  ).toBe(2)
+})

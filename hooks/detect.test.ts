@@ -32,6 +32,32 @@ test('worktreeAdds finds the folder git runs in and the path word', async () => 
   expect(worktreeAdds('git worktree list && git status')).toEqual([])
 })
 
+test('a for loop over listed words is read once per word', async () => {
+  const loop =
+    'for r in agentx-next guardian; do cd ~/Development/Codenotary/$r || exit 1; echo "== $r"; ' +
+    'git worktree add -q -b feat/autosec-containers .claude/worktrees/autosec-containers origin/main && ' +
+    'git -C .claude/worktrees/autosec-containers log --oneline -1; done'
+  expect(worktreeAdds(loop)).toEqual([
+    { dir: '~/Development/Codenotary/agentx-next', path: '.claude/worktrees/autosec-containers' },
+    { dir: '~/Development/Codenotary/guardian', path: '.claude/worktrees/autosec-containers' },
+  ])
+  expect(branchesMade(loop)).toEqual([
+    {
+      dir: '~/Development/Codenotary/agentx-next/.claude/worktrees/autosec-containers',
+      branch: 'feat/autosec-containers',
+    },
+    {
+      dir: '~/Development/Codenotary/guardian/.claude/worktrees/autosec-containers',
+      branch: 'feat/autosec-containers',
+    },
+  ])
+  expect(worktreeAdds('for r in one\ndo\n  git -C "/x/${r}" worktree add y\ndone')).toEqual([
+    { dir: '/x/one', path: 'y' },
+  ])
+  expect(worktreeAdds('for r in $REPOS; do cd /x/$r && git worktree add y; done')).toEqual([])
+  expect(worktreeAdds('for r in a; do cd /x/$rest && git worktree add y; done')).toEqual([])
+})
+
 test('a heredoc body is not read as a command', async () => {
   const command = 'cat > notes.md <<EOF\ngit worktree add ../nope\nEOF\ngit worktree add ../yes'
   expect(worktreeAdds(command)).toEqual([{ dir: null, path: '../yes' }])

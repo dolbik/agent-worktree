@@ -139,6 +139,26 @@ const joinDir = (dir: string | null | undefined, path: string) =>
         ? undefined
         : `${dir.replace(/\/+$/, '')}/${path}`
 
+// a for loop over listed words runs its body once per word, with the word put in for the variable
+const withLoops = (segments: string[][]) => {
+  const out: string[][] = []
+  for (let i = 0; i < segments.length; i++) {
+    const words = segments[i] ?? []
+    const [keyword, name = '', inWord, ...values] = words
+    const end = segments.findIndex((one, j) => j > i && one[0] === 'done')
+    if (keyword !== 'for' || inWord !== 'in' || !/^[A-Za-z_]\w*$/.test(name) || values.some(isDynamic) || end < 0) {
+      out.push(words)
+      continue
+    }
+    const body = segments.slice(i + 1, end)
+    const variable = new RegExp(`\\$(?:\\{${name}\\}|${name}(?![A-Za-z0-9_]))`, 'g')
+    for (const value of values) out.push(...body.map(one => one.map(word => word.replace(variable, () => value))))
+    i = end
+  }
+
+  return out
+}
+
 export type WorktreeAdd = { dir: string | null; path: string | null }
 type GitCall = { dir: string | null | undefined; args: string[] }
 
@@ -146,9 +166,9 @@ type GitCall = { dir: string | null | undefined; args: string[] }
 const gitCalls = (command: string): GitCall[] => {
   const calls: GitCall[] = []
   let cdDir: string | null | undefined = null
-  for (const words of tokenize(withoutHeredocBodies(command))) {
+  for (const words of withLoops(tokenize(withoutHeredocBodies(command)))) {
     let i = 0
-    while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i] ?? '')) i++
+    while (/^[A-Za-z_][A-Za-z0-9_]*=|^(do|then|else)$/.test(words[i] ?? '')) i++
     const first = words[i] ?? ''
     if (first === 'cd') {
       cdDir = joinDir(cdDir, words[i + 1] ?? '~')
