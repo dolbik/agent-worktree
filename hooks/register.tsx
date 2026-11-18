@@ -192,8 +192,13 @@ export const register: Register = on => {
     const here = e.agentId === undefined ? (await read($, tracked)).find(one => one.isHere)?.path : undefined
     const shell = agent?.cwd ?? here ?? (await $.session.cwd())
     const now = await $.clock.now()
-    noteBranches(made.map(one => ({ dir: resolvePath(shell, one.dir ?? '.', home), branch: one.branch, at: now })))
-    if (adds.length === 0) return next(e)
+    const branches = made.map(one => ({ dir: resolvePath(shell, one.dir ?? '.', home), branch: one.branch, at: now }))
+    if (adds.length === 0) {
+      const ran = await next(e)
+      if (ran.deny === undefined && !ran.isError) noteBranches(branches)
+
+      return ran
+    }
     const targets = adds.map(one => {
       const dir = resolvePath(shell, one.dir ?? '.', home)
 
@@ -203,6 +208,7 @@ export const register: Register = on => {
     const before = await Promise.all(dirs.map(dir => listAt($, dir)))
     const ran = await next(e)
     if (ran.deny !== undefined) return ran
+    if (!ran.isError) noteBranches(branches)
     const after = await Promise.all(dirs.map(dir => listAt($, dir)))
     // only the folders the command names, so worktrees others make meanwhile are not taken
     const added = after.flatMap((list, i) => {

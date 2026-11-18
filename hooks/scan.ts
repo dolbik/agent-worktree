@@ -439,14 +439,19 @@ async function refreshNow($: EngineInterface, isFull: boolean) {
   const isPaneSeen = now - paneDrawnAt < PANE_SEEN
   const isStale = isFull || (isPaneSeen && now - previous.rowsAt >= ROWS_EVERY)
   const cached = new Map(previous.others.map(row => [row.path, row]))
-  const use = isStale ? await inUseOf($, others) : {}
-  const rows = await Promise.all(
-    others.map(async one => {
-      const row = cached.get(one.path)
+  // between the minute reads a row is kept only while its branch, commit and lock stay as they were
+  const kept = (one: Listed) => {
+    const row = cached.get(one.path)
+    const isSame =
+      !!row &&
+      row.branch === one.branch &&
+      row.head === one.head &&
+      (row.lock === undefined) === (one.lock === undefined)
 
-      return !isStale && row ? { ...row, branch: one.branch } : rowOf($, one, use)
-    }),
-  )
+    return !isStale && isSame ? row : undefined
+  }
+  const use = others.every(kept) ? {} : await inUseOf($, others)
+  const rows = await Promise.all(others.map(async one => kept(one) ?? rowOf($, one, use)))
 
   const opened = await read($, expanded)
   const tiles = await Promise.all(

@@ -85,11 +85,12 @@ bar, last commit and sparkline, and shortens its buttons.
   the groups. In use means a lock held by a running session, or a process whose
   current folder is inside the worktree; a running session that made the
   worktree but is not standing in it does not count. The pane removes nothing.
-  Read once a minute while the pane is open, and on `Refresh`. Press a row to
-  open a tile under it with what a card shows: commits ahead and behind,
-  uncommitted files, the diff bar, the last commit, every PR from its branch,
-  and the `Investigate`, `Review diff`, `Cleanup check` and `Files` buttons; an
-  open tile is read every 5 seconds. Press the row again to close it.
+  Read once a minute while the pane is open, at once when a worktree appears or
+  moves to another branch or commit, and on `Refresh`. Press a row to open a
+  tile under it with what a card shows: commits ahead and behind, uncommitted
+  files, the diff bar, the last commit, every PR from its branch, and the
+  `Investigate`, `Review diff`, `Cleanup check` and `Files` buttons; an open
+  tile is read every 5 seconds. Press the row again to close it.
 - **Each card**: branch, commits ahead and behind the main worktree's branch,
   uncommitted file count, diff size, last commit and its age.
 - **Live agent**: the agent working in the worktree, matched by its directory:

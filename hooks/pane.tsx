@@ -136,7 +136,6 @@ export type Facts = {
   exists: boolean
   branch: string | null
   lockIsLive: boolean
-  lockIsStale: boolean
   hasProcessInside: boolean
   isUnread: boolean
   uncommittedFiles: number
@@ -475,7 +474,6 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
     exists: !row.isGone,
     branch: row.branch ?? null,
     lockIsLive: row.lock === 'live',
-    lockIsStale: row.lock === 'stale',
     hasProcessInside: !!row.hasProcess,
     isUnread: !!row.isUnread,
     uncommittedFiles: row.dirty ?? 0,

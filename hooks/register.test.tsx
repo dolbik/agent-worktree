@@ -7,7 +7,7 @@ import type { Facts } from './pane'
 type On = Parameters<TestBody>[1]
 
 type Dollar = Parameters<TestBody>[0]
-type Wt = { path: string; branch: string; lock?: string }
+type Wt = { path: string; branch: string; lock?: string; head?: string }
 type Answers = {
   status: string
   revList: string
@@ -94,7 +94,8 @@ const gitAnswer = (w: World, argv: readonly string[], dir: string) => {
   if (args[0] === 'worktree')
     return (w.repos[best.repo] ?? [])
       .map(
-        one => `worktree ${one.path}\nHEAD a\nbranch refs/heads/${one.branch}${one.lock ? `\nlocked ${one.lock}` : ''}`,
+        one =>
+          `worktree ${one.path}\nHEAD ${one.head ?? 'a'}\nbranch refs/heads/${one.branch}${one.lock ? `\nlocked ${one.lock}` : ''}`,
       )
       .join('\n\n')
   if (args[0] === 'rev-parse') return best.wt.branch
@@ -1294,7 +1295,6 @@ const CLEAN: Facts = {
   exists: true,
   branch: 'b',
   lockIsLive: false,
-  lockIsStale: false,
   hasProcessInside: false,
   isUnread: false,
   uncommittedFiles: 0,
@@ -1322,7 +1322,6 @@ const ONE_REASON: [string, Partial<Facts>, string, string[]][] = [
   ['an open PR', { pr: 'open' }, 'pr-open', []],
   ['a merged PR', { pr: 'merged' }, 'can-be-removed', ['pr-merged']],
   ['a closed PR', { pr: 'closed' }, 'can-be-removed', ['pr-closed']],
-  ['a stale lock on a clean merged worktree', { lockIsStale: true }, 'can-be-removed', ['pr-merged']],
 ]
 
 test('groupOf puts each fact in the worktrees mod group', () => {
@@ -1519,5 +1518,59 @@ test('pressing an other worktree’s row opens a tile with a card’s details; p
   await ui.press({ key: `other:${O.path}` })
   expect(await shown()).not.toContain(numbers)
   expect(await ui.find({ key: `${O.path}:Investigate` })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('a failed or refused git switch -c records no branch for the worktree', async ($, on) => {
+  const W = { path: '/repo/.claude/worktrees/setup', branch: 'fix/now' }
+  const w = world(on, { '/repo': [MAIN, W] })
+  enters(on, W)
+  const answers: object[] = [
+    { isError: true, result: undefined, text: 'Exit code 128\nfatal: a branch named fix/old already exists' },
+    { deny: 'not allowed' },
+  ]
+  on('tool.call', { tool: 'Bash' }, () => answers.shift() as never)
+  w.pulls = {
+    'fix/old': [{ number: 7, state: 'MERGED', title: 'Someone else’s branch' }],
+    'fix/denied': [{ number: 8, state: 'MERGED', title: 'Never made here' }],
+  }
+  await start($)
+  await $.tool.call({ tool: 'EnterWorktree', name: 'setup' })
+  await $.tool.call({ tool: 'Bash', command: 'git switch -c fix/old' } as never)
+  await $.tool.call({ tool: 'Bash', command: 'git switch -c fix/denied' } as never)
+
+  expect((await texts($)).filter(text => text.startsWith('PR #'))).toEqual([])
+})
+
+test('a row that appears or moves to a new commit between the minute reads is read at once', async ($, on) => {
+  const A = { path: '/repo/.claude/worktrees/merged', branch: 'feat-a', head: 'a' }
+  const N = { path: '/repo/.claude/worktrees/new', branch: 'feat-n' }
+  const w = world(on, { '/repo': [MAIN, WT, A] })
+  w.pulls = {
+    'feat-a': [{ number: 5, state: 'MERGED', title: 'a', headRefOid: 'a' }],
+    'feat-n': [{ number: 6, state: 'MERGED', title: 'n', headRefOid: 'a' }],
+  }
+  enters(on, WT)
+  await start($)
+  await $.tool.call({ tool: 'EnterWorktree', name: 'fix-auth' })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.press({ key: 'refresh' })
+  const lines = async () =>
+    (await ui.findAll({ type: 'Text' }))
+      .map(one => one.text)
+      .filter(one => /^ {2}\S.* · \d+$|^ {4}● |^ {6}\S/.test(one))
+  expect(await lines()).toEqual(['  Can be removed · 1', '    ● merged  feat-a  PR #5 merged      0 d'])
+
+  w.repos['/repo']?.push(N)
+  A.head = 'b'
+  w.per[A.path] = { unpushed: '1' }
+  await ui.press({ key: `other:${A.path}` })
+  expect(await lines()).toEqual([
+    '  Needs a look · 2',
+    '    ● merged  feat-a  no PR             0 d',
+    '      1 commit on no remote',
+    '    ● new     feat-n  PR …              0 d',
+  ])
   await ui.unmount()
 })
