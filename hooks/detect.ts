@@ -139,24 +139,46 @@ const joinDir = (dir: string | null | undefined, path: string) =>
         ? undefined
         : `${dir.replace(/\/+$/, '')}/${path}`
 
+// the `done` that closes the loop opened at segment i, past the loops opened inside it
+const doneOf = (segments: string[][], i: number) => {
+  let depth = 0
+  for (let j = i; j < segments.length; j++) {
+    const first = segments[j]?.[0] ?? ''
+    if (['for', 'while', 'until'].includes(first)) depth++
+    else if (first === 'done' && --depth === 0) return j
+  }
+
+  return -1
+}
+
 // a for loop over listed words runs its body once per word, with the word put in for the variable
-const withLoops = (segments: string[][]) => {
+const withLoops = (segments: string[][]): string[][] => {
   const out: string[][] = []
   for (let i = 0; i < segments.length; i++) {
     const words = segments[i] ?? []
     const [keyword, name = '', inWord, ...values] = words
-    const end = segments.findIndex((one, j) => j > i && one[0] === 'done')
-    if (keyword !== 'for' || inWord !== 'in' || !/^[A-Za-z_]\w*$/.test(name) || values.some(isDynamic) || end < 0) {
+    const end = keyword === 'for' && inWord === 'in' ? doneOf(segments, i) : -1
+    if (end < 0 || !/^[A-Za-z_]\w*$/.test(name) || values.some(value => isDynamic(value) || /[*?[{]/.test(value))) {
       out.push(words)
       continue
     }
-    const body = segments.slice(i + 1, end)
+    const body = withLoops(segments.slice(i + 1, end))
     const variable = new RegExp(`\\$(?:\\{${name}\\}|${name}(?![A-Za-z0-9_]))`, 'g')
-    for (const value of values) out.push(...body.map(one => one.map(word => word.replace(variable, () => value))))
+    const isUsed = body.some(one => one.some(word => word.search(variable) >= 0))
+    for (const value of isUsed ? values : values.slice(0, 1))
+      out.push(...body.map(one => one.map(word => word.replace(variable, () => value))))
     i = end
   }
 
   return out
+}
+
+// words that open a condition or a block before the command itself
+const leading = (words: string[]) => {
+  let i = 0
+  while (/^(do|then|else|if|elif|!)$/.test(words[i] ?? '')) i++
+
+  return words.slice(i)
 }
 
 export type WorktreeAdd = { dir: string | null; path: string | null }
@@ -166,9 +188,9 @@ type GitCall = { dir: string | null | undefined; args: string[] }
 const gitCalls = (command: string): GitCall[] => {
   const calls: GitCall[] = []
   let cdDir: string | null | undefined = null
-  for (const words of withLoops(tokenize(withoutHeredocBodies(command)))) {
+  for (const words of withLoops(tokenize(withoutHeredocBodies(command)).map(leading))) {
     let i = 0
-    while (/^[A-Za-z_][A-Za-z0-9_]*=|^(do|then|else)$/.test(words[i] ?? '')) i++
+    while (/^[A-Za-z_][A-Za-z0-9_]*=|^(while|until|!)$/.test(words[i] ?? '')) i++
     const first = words[i] ?? ''
     if (first === 'cd') {
       cdDir = joinDir(cdDir, words[i + 1] ?? '~')

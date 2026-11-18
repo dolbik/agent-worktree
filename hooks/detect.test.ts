@@ -56,6 +56,25 @@ test('a for loop over listed words is read once per word', async () => {
   ])
   expect(worktreeAdds('for r in $REPOS; do cd /x/$r && git worktree add y; done')).toEqual([])
   expect(worktreeAdds('for r in a; do cd /x/$rest && git worktree add y; done')).toEqual([])
+  expect(worktreeAdds('for r in a b; do cd /r/$r; for x in 1; do :; done; git worktree add c; done')).toEqual([
+    { dir: '/r/a', path: 'c' },
+    { dir: '/r/b', path: 'c' },
+  ])
+  expect(worktreeAdds('for r in a b; do for w in x y; do git -C /r/$r worktree add $w; done; done')).toEqual([
+    { dir: '/r/a', path: 'x' },
+    { dir: '/r/a', path: 'y' },
+    { dir: '/r/b', path: 'x' },
+    { dir: '/r/b', path: 'y' },
+  ])
+  expect(worktreeAdds('for r in a b\ndo\n  if cd /r/$r; then git worktree add c; fi\ndone')).toEqual([
+    { dir: '/r/a', path: 'c' },
+    { dir: '/r/b', path: 'c' },
+  ])
+  expect(worktreeAdds('if git -C /r worktree add c; then echo ok; fi')).toEqual([{ dir: '/r', path: 'c' }])
+  expect(worktreeAdds('while ! git -C /r worktree add c; do sleep 1; done')).toEqual([{ dir: '/r', path: 'c' }])
+  expect(worktreeAdds('for d in */; do git -C "$d" worktree add c; done')).toEqual([])
+  expect(worktreeAdds('for r in {a,b}; do git -C /r/$r worktree add c; done')).toEqual([])
+  expect(worktreeAdds('for r in a b; do git -C /r worktree add c; done')).toEqual([{ dir: '/r', path: 'c' }])
 })
 
 test('a heredoc body is not read as a command', async () => {
