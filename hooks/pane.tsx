@@ -22,7 +22,7 @@ const READ_ONLY = 'Read-only: do not modify, switch into, merge or remove the wo
 const SPARK = '▁▂▃▄▅▆▇█'
 const BAR_WIDTH = 24
 const PROBLEMS_SHOWN = 5
-const PULLS_SHOWN = 5
+const PULLS_SHOWN = 3
 
 export function openPane($: EngineInterface) {
   return $.ui.open({ id: PANE, title: 'Worktrees' })

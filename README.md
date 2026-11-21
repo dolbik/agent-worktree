@@ -69,7 +69,7 @@ bar, last commit and sparkline, and shortens its buttons.
   this session's process; one an agent works in is claimed for the session. Each
   card says who made it and when, and lists the PRs your `gh` account opened
   from the branches made in its worktree or checked out there now
-  (`PR #180 merged · title`, newest first, five at most), read from GitHub once
+  (`PR #180 merged · title`, the newest three, the rest under `+N more PRs`), read from GitHub once
   a minute while the pane is open; when `gh` cannot answer, the card says
   `PR unknown`. The newest worktree comes first. A worktree stays here after its
   agent ends. The worktree the session is in is marked `★ here`.

@@ -1165,7 +1165,7 @@ test('a card lists the PRs of the branches made in its worktree, newest first', 
   ])
 })
 
-test('a card shows five PRs, and its more-PRs button shows the rest', async ($, on) => {
+test('a card shows its three newest PRs, and its more-PRs button shows the rest', async ($, on) => {
   const W = { path: '/repo/.claude/worktrees/setup', branch: 'b6' }
   const w = world(on, { '/repo': [MAIN, W] })
   enters(on, W)
@@ -1184,13 +1184,13 @@ test('a card shows five PRs, and its more-PRs button shows the rest', async ($, 
   const rows = async () =>
     (await ui.findAll({ type: 'Text' })).filter(one => one.text.startsWith('PR #') && one.text.includes(' · '))
   const more = async () => (await ui.find({ type: 'Button', key: `${W.path}:pulls` }))?.text
-  expect(await rows()).toHaveLength(5)
-  expect(await more()).toBe('+2 more PRs')
+  expect((await rows()).map(one => one.text.split(' · ')[0])).toEqual(['PR #7 merged', 'PR #6 merged', 'PR #5 merged'])
+  expect(await more()).toBe('+4 more PRs')
   await ui.press({ key: `${W.path}:pulls` })
   expect(await rows()).toHaveLength(7)
   expect(await more()).toBe('Fewer PRs')
   await ui.press({ key: `${W.path}:pulls` })
-  expect(await rows()).toHaveLength(5)
+  expect(await rows()).toHaveLength(3)
   await ui.unmount()
 })
 
