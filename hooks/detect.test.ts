@@ -13,6 +13,7 @@ import {
   processFolders,
   startsOf,
   resolvePath,
+  usesIn,
   utf8Length,
   wholeLines,
   worktreeAdds,
@@ -264,4 +265,23 @@ test('a Bash command resolves against the previous line folder, since its own li
     '/agentx/.claude/worktrees/x',
     '/guardian/.claude/worktrees/x',
   ])
+})
+
+test('a tool call is work in a worktree when it runs inside it or names it in its input', () => {
+  const A = '/r/.claude/worktrees/a'
+  const B = '/r/.claude/worktrees/a-1'
+  const line = (cwd: string, timestamp: string, content: unknown[]) =>
+    JSON.stringify({ type: 'assistant', cwd, timestamp, message: { content } })
+  const bash = (command: string) => ({ type: 'tool_use', name: 'Bash', input: { command } })
+  const lines = [
+    line(`${A}/src`, '2026-11-01T10:00:00.000Z', [bash('ls')]),
+    line('/r', '2026-11-02T10:00:00.000Z', [bash(`git -C ${B} status`)]),
+    line('/r', '2026-11-03T10:00:00.000Z', [{ type: 'tool_result', content: `${A} [main]` }]),
+    line('/r', '2026-11-04T10:00:00.000Z', [{ type: 'text', text: `see ${A}` }, bash('ls')]),
+  ]
+
+  expect(usesIn(lines, [A, B])).toEqual({
+    [A]: Date.parse('2026-11-01T10:00:00.000Z'),
+    [B]: Date.parse('2026-11-02T10:00:00.000Z'),
+  })
 })

@@ -36,6 +36,10 @@ THIS SESSION  2 worktrees                                        Refresh
 │ side  ↑1 ↓0 main · clean                                     │
 ╰──────────────────────────────────────────────────────────────╯
 
+EARLIER IN THIS SESSION  1 worktree not used in the last day
+  ⎇ cache-spike  spike/cache  PR #41 merged      12 d
+    1 uncommitted file
+
 PROBLEMS IN THIS SESSION  1 failed worktree call
 ✗ 14:05  subagent «fix auth»  add ../tmp-x  invalid reference: .
 
@@ -73,6 +77,12 @@ bar, last commit and sparkline, and shortens its buttons.
   a minute while the pane is open; when `gh` cannot answer, the card says
   `PR unknown`. The newest worktree comes first. A worktree stays here after its
   agent ends. The worktree the session is in is marked `★ here`.
+- **Earlier in this session**: this session's worktrees it has not made or
+  worked in for a day, one row each: the branch, its newest PR and the days
+  since the session last worked there. A tool call counts as work in a worktree
+  when it runs inside it or names its folder in its input; the worktree the
+  session is in, and one its agent runs in, stay above. Press a row to open its
+  card under it.
 - **Problems in this session**: one line per failed worktree call (a refused
   `EnterWorktree`, a `git worktree add` that failed), the last five.
 - **Other worktrees**: the rest of the worktrees of the same repositories,

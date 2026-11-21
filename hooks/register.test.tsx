@@ -58,6 +58,7 @@ const AGENT_WT = { path: '/repo/.claude/worktrees/agent-1', branch: 'worktree-ag
 type World = {
   repos: Record<string, Wt[]>
   cwd: string
+  now: number
   agents: never[]
   per: Record<string, Partial<Answers>>
   pid?: { pid: number; start: string }
@@ -129,6 +130,7 @@ const world = (on: On, repos: Record<string, Wt[]>, cwd = '/repo'): World => {
   const w: World = {
     repos,
     cwd,
+    now: NOW,
     agents: [],
     per: {},
     gone: new Set(),
@@ -148,7 +150,7 @@ const world = (on: On, repos: Record<string, Wt[]>, cwd = '/repo'): World => {
   on('session.cwd', () => ({ value: w.cwd }))
   on('env.get', () => ({ value: '/home/u' }))
   on('clock.after', () => new Promise<never>(() => {}))
-  on('clock.now', () => ({ value: NOW }))
+  on('clock.now', () => ({ value: w.now }))
   on('ui.status', (_, e) => {
     w.status.push(e.text)
 
@@ -1622,4 +1624,54 @@ test('worktrees a Bash loop made before the plugin loaded are found in the trans
   expect(
     found.filter(one => one.startsWith('made by this session at ') && one.endsWith(' · git worktree add')).length,
   ).toBe(2)
+})
+
+test('a worktree the session has not worked in for a day is a row under EARLIER, and opens its card', async ($, on) => {
+  const OLD = { path: '/repo/.claude/worktrees/old', branch: 'old' }
+  const NEW = { path: '/repo/.claude/worktrees/new', branch: 'new' }
+  const w = world(on, { '/repo': [MAIN, OLD, NEW] })
+  w.now = Date.parse('2026-11-20T10:00:00.000Z')
+  w.files['/t/s.jsonl'] = [
+    bashLine('/repo', '2026-11-01T10:00:00.000Z', 'git worktree add .claude/worktrees/old'),
+    bashLine('/repo', '2026-11-01T11:00:00.000Z', 'git worktree add .claude/worktrees/new'),
+    bashLine(OLD.path, '2026-11-10T10:00:00.000Z', 'ls'),
+    bashLine('/repo', '2026-11-20T09:00:00.000Z', `git -C ${NEW.path} status`),
+  ].join('\n')
+  w.mtimes[`${OLD.path}/.git`] = Date.parse('2026-11-01T10:00:00.000Z')
+  w.mtimes[`${NEW.path}/.git`] = Date.parse('2026-11-01T11:00:00.000Z')
+  await start($)
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.press({ key: 'refresh' })
+  const shown = async () => (await ui.findAll({ type: 'Text' })).map(one => one.text)
+  const found = await shown()
+  expect(found).toContain('THIS SESSION  1 worktree')
+  expect(found.some(one => one.startsWith('⎇ new'))).toBe(true)
+  expect(found).toContain('EARLIER IN THIS SESSION  1 worktree not used in the last day')
+  expect(found.find(one => one.startsWith('  ⎇ old'))).toMatch(/^  ⎇ old  old  PR .+ 10 d$/)
+  expect(found.some(one => one.startsWith('⎇ old'))).toBe(false)
+
+  await ui.press({ key: `earlier:history:${OLD.path}` })
+  expect((await shown()).some(one => one.startsWith('⎇ old'))).toBe(true)
+  await ui.press({ key: `earlier:history:${OLD.path}` })
+  expect((await shown()).some(one => one.startsWith('⎇ old'))).toBe(false)
+  await ui.unmount()
+
+  w.files['/t/s.jsonl'] += `\n${bashLine('/repo', '2026-11-20T09:30:00.000Z', `cat ${OLD.path}/README.md`)}\n`
+  const later = await texts($)
+  expect(later).toContain('THIS SESSION  2 worktrees')
+  expect(later.some(one => one.startsWith('EARLIER IN THIS SESSION'))).toBe(false)
+})
+
+test('the worktree the session is in stays in THIS SESSION however long ago it was used', async ($, on) => {
+  const OLD = { path: '/repo/.claude/worktrees/old', branch: 'old' }
+  const w = world(on, { '/repo': [MAIN, OLD] }, OLD.path)
+  w.now = Date.parse('2026-11-20T10:00:00.000Z')
+  w.files['/t/s.jsonl'] = bashLine('/repo', '2026-11-01T10:00:00.000Z', 'git worktree add .claude/worktrees/old')
+  w.mtimes[`${OLD.path}/.git`] = Date.parse('2026-11-01T10:00:00.000Z')
+  await start($, OLD.path)
+
+  const found = await texts($)
+  expect(found).toContain('THIS SESSION  1 worktree')
+  expect(found.some(one => one.startsWith('EARLIER IN THIS SESSION'))).toBe(false)
 })

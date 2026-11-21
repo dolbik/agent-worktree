@@ -7,8 +7,8 @@ import { ACTIVE, PANE, liveTracked, nameOf, notePaneDrawn, refresh } from './sca
 const tracked = atom({ plugin: 'agent-worktree', key: 'tracked' } as const, [], { shape: 'tracked-2' })
 const grove = atom(
   { plugin: 'agent-worktree', key: 'grove' } as const,
-  { repoOf: {}, others: [], rowsAt: 0, snaps: {}, agents: {} },
-  { shape: 'grove-8' },
+  { repoOf: {}, others: [], rowsAt: 0, snaps: {}, agents: {}, usedAt: {} },
+  { shape: 'grove-9' },
 )
 const pulls = atom(
   { plugin: 'agent-worktree', key: 'pulls' } as const,
@@ -104,6 +104,17 @@ export const clockOf = (at: number, now: number) => {
 
 const fit = (text: string, width: number) => (text.length <= width ? text : `${text.slice(0, Math.max(0, width - 1))}…`)
 const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
+
+// widths of a row's name and branch columns in the room its fixed parts leave; no branch column when too narrow
+const columnsOf = (names: string[], branches: string[], room: number) => {
+  const longestName = Math.max(0, ...names.map(name => name.length))
+  const longestBranch = Math.max(0, ...branches.map(branch => branch.length))
+  const nameWidth = Math.min(longestName, Math.max(12, Math.ceil(room / 2)))
+
+  return longestBranch > 0 && room - nameWidth >= 12
+    ? { name: nameWidth, branch: Math.min(longestBranch, room - nameWidth) }
+    : { name: Math.max(8, Math.min(longestName, room)), branch: 0 }
+}
 
 export const madeBy = (one: Tracked, now: number) => {
   const who = isAgentMade(one) ? `subagent «${one.label ?? one.agentId ?? ''}»` : 'this session'
@@ -210,7 +221,7 @@ function reasonText(row: Row, reason: Reason): string {
 export async function drawPane($: EngineInterface, ui: ElementTable, width: number) {
   const { Box, Text, Button } = ui
   const list = await read($, tracked)
-  const { repoOf, others, snaps, agents } = await read($, grove)
+  const { repoOf, others, snaps, agents, usedAt } = await read($, grove)
   const failed = await read($, problems)
   const open = await read($, expanded)
   const { byPath, unknown } = await read($, pulls)
@@ -220,6 +231,17 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
   const live = liveTracked(list)
   const current = list.filter(one => !one.isRemoved)
   const removed = list.filter(one => one.isRemoved)
+  const lastUsed = (one: Tracked) => Math.max(one.at ?? 0, usedAt[one.path] ?? 0)
+  // made or worked in by the session in the last day, the worktree it is in, or one its agent runs in
+  const isWorkedOn = (one: Tracked) =>
+    one.path === '' ||
+    one.isHere ||
+    one.isRunning ||
+    ACTIVE.includes(agents[one.path]?.status ?? '') ||
+    now - lastUsed(one) < DAY
+  const recent = current.filter(isWorkedOn)
+  const earlier = current.filter(one => !isWorkedOn(one))
+  const daysSince = (at: number) => `${Math.max(0, Math.floor((now - at) / DAY))} d`
   const overlaps = overlapsOf(
     snaps,
     live.map(one => one.path),
@@ -441,6 +463,65 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
     )
   }
 
+  const earlierBranch = (one: Tracked) => snaps[one.path]?.branch ?? one.branch ?? ''
+  const earlierAge = (one: Tracked) => (lastUsed(one) > 0 ? daysSince(lastUsed(one)) : '—')
+  const earlierAgeWidth = Math.max(0, ...earlier.map(one => earlierAge(one).length))
+  const earlierColumns = columnsOf(
+    earlier.map(one => nameOf(one.path)),
+    earlier.map(earlierBranch),
+    width - 8 - PR_WIDTH - 2 - earlierAgeWidth,
+  )
+  // a worktree of this session not worked in for a day: one row, and its card under it once pressed
+  const earlierRow = (one: Tracked, isLast: boolean) => {
+    const key = `earlier:${one.toolUseId}`
+    const pull = (byPath[one.path] ?? []).find(pull => pull.isMine)
+    const pr = pull
+      ? `PR #${pull.number} ${pull.state}`
+      : unknown.includes(one.path)
+        ? 'PR unknown'
+        : byPath[one.path]
+          ? 'no PR'
+          : 'PR …'
+    const dirty = snaps[one.path]?.dirty ?? 0
+    const { name, branch } = earlierColumns
+
+    return [
+      <Button key={key} plain onPress={toggle(key)}>
+        <Text wrap="truncate-end">
+          {'  '}
+          {isAgentMade(one) ? <Text color="suggestion">◆</Text> : '⎇'}
+          {` ${fit(nameOf(one.path), name).padEnd(name)}  `}
+          {branch > 0 && <Text dimColor>{`${fit(earlierBranch(one), branch).padEnd(branch)}  `}</Text>}
+          <Text color={pull ? pullColor(pull.state) : undefined} dimColor={!pull}>
+            {pr.padEnd(PR_WIDTH)}
+          </Text>
+          <Text dimColor>{`  ${earlierAge(one).padStart(earlierAgeWidth)}`}</Text>
+        </Text>
+      </Button>,
+      ...(dirty > 0
+        ? [
+            <Text key={`${key}:note`} wrap="truncate-end" dimColor>
+              {`    ${count(dirty, 'uncommitted file', 'uncommitted files')}`}
+            </Text>,
+          ]
+        : []),
+      ...(open.includes(key)
+        ? [
+            <Box key={`${key}:card`} flexDirection="column" marginLeft={2}>
+              {card(one)}
+            </Box>,
+          ]
+        : []),
+      ...(isLast
+        ? []
+        : [
+            <Text key={`${key}:line`} wrap="truncate-end" dimColor>
+              {`  ${'─'.repeat(Math.max(0, width - 2))}`}
+            </Text>,
+          ]),
+    ]
+  }
+
   // a removed worktree's PRs are not read again, so an open one is shown by its number alone
   const removedLine = (one: Tracked) => {
     const pull = (byPath[one.path] ?? []).find(pull => pull.isMine)
@@ -510,20 +591,14 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
   const groups = new Map(others.map(row => [row.path, groupOf(factsOf(row))]))
   const groupOfRow = (row: Row) => groups.get(row.path) ?? { group: 'needs-a-look' as const, reasons: [] }
   const ageOf = (row: Row) =>
-    row.isGone
-      ? 'folder gone'
-      : row.committedAt === undefined
-        ? '—'
-        : `${Math.max(0, Math.floor((now - row.committedAt) / DAY))} d`
+    row.isGone ? 'folder gone' : row.committedAt === undefined ? '—' : daysSince(row.committedAt)
   const ageWidth = Math.max(0, ...others.map(row => ageOf(row).length))
   const tail = PR_WIDTH + 2 + ageWidth
-  const longestName = Math.max(0, ...others.map(row => nameOf(row.path).length))
-  const longestBranch = Math.max(0, ...others.map(row => (row.branch ?? 'detached').length))
-  const room = width - 6 - 4 - tail
-  const nameWidth = Math.min(longestName, Math.max(12, Math.ceil(room / 2)))
-  const branchWidth = Math.min(longestBranch, room - nameWidth)
-  const hasBranch = longestBranch > 0 && room - nameWidth >= 12
-  const nameRoom = hasBranch ? nameWidth : Math.max(8, Math.min(longestName, room))
+  const columns = columnsOf(
+    others.map(row => nameOf(row.path)),
+    others.map(row => row.branch ?? 'detached'),
+    width - 10 - tail,
+  )
   const otherRow = (row: Row, isLast: boolean) => {
     const { group, reasons } = groupOfRow(row)
     const isAtRisk = !!row.dirty || !!row.unpushed || group === 'needs-a-look'
@@ -537,8 +612,10 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
         <Text wrap="truncate-end">
           {'    '}
           <Text color={row.isGone ? 'subtle' : isAtRisk ? 'warning' : 'success'}>●</Text>
-          {` ${fit(nameOf(row.path), nameRoom).padEnd(nameRoom)}  `}
-          {hasBranch && <Text dimColor>{`${fit(row.branch ?? 'detached', branchWidth).padEnd(branchWidth)}  `}</Text>}
+          {` ${fit(nameOf(row.path), columns.name).padEnd(columns.name)}  `}
+          {columns.branch > 0 && (
+            <Text dimColor>{`${fit(row.branch ?? 'detached', columns.branch).padEnd(columns.branch)}  `}</Text>
+          )}
           <Text color={prTextColor(row)}>{prText(row).padEnd(PR_WIDTH)}</Text>
           <Text dimColor>{`  ${ageOf(row).padStart(ageWidth)}`}</Text>
         </Text>
@@ -616,14 +693,27 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
   return (
     <Box flexDirection="column">
       <Box flexDirection="row" justifyContent="space-between">
-        {heading('THIS SESSION', 'claude', count(live.length, 'worktree', 'worktrees'))}
+        {heading('THIS SESSION', 'claude', count(live.filter(isWorkedOn).length, 'worktree', 'worktrees'))}
         <Button key="refresh" onPress={() => void refresh($, true)}>
           Refresh
         </Button>
       </Box>
       {list.length === 0 && <Text dimColor>No worktrees in this session yet.</Text>}
       {list.length > 0 && current.length === 0 && <Text dimColor>No worktrees left; the removed ones are below.</Text>}
-      {[...current].sort(byRecent).map(card)}
+      {recent.length === 0 && earlier.length > 0 && (
+        <Text dimColor>No worktree used in the last day; the earlier ones are below.</Text>
+      )}
+      {[...recent].sort(byRecent).map(card)}
+      {earlier.length > 0 && <Text> </Text>}
+      {earlier.length > 0 &&
+        heading(
+          'EARLIER IN THIS SESSION',
+          'claude',
+          `${count(earlier.length, 'worktree', 'worktrees')} not used in the last day`,
+        )}
+      {[...earlier]
+        .sort((a, b) => lastUsed(b) - lastUsed(a))
+        .flatMap((one, i, all) => earlierRow(one, i === all.length - 1))}
       {failed.length > 0 && <Text> </Text>}
       {failed.length > 0 &&
         heading(
