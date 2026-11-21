@@ -49,10 +49,13 @@ OTHER WORKTREES IN app  3 in 1 repository
 
   Can be removed · 1
     ● old-spike    spike/cache         PR #41 merged     98 d
+
+REMOVED  1 worktree this session made
+  ⎇ try-cache  PR #48 merged  made by this session at 11:20 · git worktree add
 ```
 
 Each of this session's worktrees is a framed card: accent border for the one
-the session is in, green while its agent runs, dim once removed. Numbers are
+the session is in, green while its agent runs. Numbers are
 coloured (`↑` green, `↓` and `dirty` yellow, `+` green, `−` red), the bar shows
 lines added and removed scaled across all cards, and the sparkline traces the
 agent's token use over its last 16 readings. Below 60 columns a card drops the
@@ -68,9 +71,8 @@ bar, last commit and sparkline, and shortens its buttons.
   from the branches made in its worktree or checked out there now
   (`PR #180 merged · title`, newest first, five at most), read from GitHub once
   a minute while the pane is open; when `gh` cannot answer, the card says
-  `PR unknown`. The newest worktree comes first; one the session removed stays, marked
-  `removed`. A worktree stays here after its agent ends. The worktree the
-  session is in is marked `★ here`.
+  `PR unknown`. The newest worktree comes first. A worktree stays here after its
+  agent ends. The worktree the session is in is marked `★ here`.
 - **Problems in this session**: one line per failed worktree call (a refused
   `EnterWorktree`, a `git worktree add` that failed), the last five.
 - **Other worktrees**: the rest of the worktrees of the same repositories,
@@ -91,6 +93,9 @@ bar, last commit and sparkline, and shortens its buttons.
   files, the diff bar, the last commit, every PR from its branch, and the
   `Investigate`, `Review diff`, `Cleanup check` and `Files` buttons; an open
   tile is read every 5 seconds. Press the row again to close it.
+- **Removed**: this session's worktrees whose folders are gone, at the bottom
+  of the pane, one line each: the PR as last read before removal (an open one by
+  its number alone, since it is not read again) and who made it and when.
 - **Each card**: branch, commits ahead and behind the main worktree's branch,
   uncommitted file count, diff size, last commit and its age.
 - **Live agent**: the agent working in the worktree, matched by its directory:

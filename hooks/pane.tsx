@@ -218,6 +218,8 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
   notePaneDrawn(now)
   const isNarrow = width < 60
   const live = liveTracked(list)
+  const current = list.filter(one => !one.isRemoved)
+  const removed = list.filter(one => one.isRemoved)
   const overlaps = overlapsOf(
     snaps,
     live.map(one => one.path),
@@ -239,7 +241,7 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
   const short: Record<string, string> = { Investigate: 'Inv', 'Review diff': 'Diff', 'Cleanup check': 'Clean' }
   const fileColor = (status: string) =>
     status === 'A' ? 'success' : status === 'D' ? 'error' : status === '??' ? undefined : 'warning'
-  const heading = (title: string, color: 'claude' | 'error', note: string) => (
+  const heading = (title: string, color: 'claude' | 'error' | 'subtle', note: string) => (
     <Text wrap="truncate-end">
       <Text bold color={color}>
         {title}
@@ -248,10 +250,10 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
     </Text>
   )
 
-  type Parts = { branch: string; filesKey: string; pullsKey: string; pullList: Pull[]; isDim: boolean; canAct: boolean }
+  type Parts = { branch: string; filesKey: string; pullsKey: string; pullList: Pull[]; canAct: boolean }
   // what a card shows below its heading, for this session's cards and for an other worktree opened from its row
   const details = (path: string, snap: Snap | undefined, parts: Parts) => {
-    const { branch, filesKey, pullsKey, pullList, isDim, canAct } = parts
+    const { branch, filesKey, pullsKey, pullList, canAct } = parts
     const agent = agents[path]
     const isActive = !!agent && ACTIVE.includes(agent.status)
     const files = snap?.files ?? []
@@ -309,7 +311,7 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
         </Text>
       ),
       ...(isPullsOpen ? pullList : pullList.slice(0, PULLS_SHOWN)).map(pull => (
-        <Text wrap="truncate-end" dimColor={isDim}>
+        <Text wrap="truncate-end">
           <Text color={pullColor(pull.state)}>{`PR #${pull.number} ${pull.state}`}</Text>
           <Text dimColor>{` · ${pull.title}`}</Text>
         </Text>
@@ -376,7 +378,6 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
     const snap = snaps[path]
     const agent = agents[path]
     const isActive = !!agent && ACTIVE.includes(agent.status)
-    const isDim = one.isRemoved
     const isAgent = isAgentMade(one)
     const lineage = agent?.lineage ?? []
 
@@ -386,18 +387,16 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
         flexDirection="column"
         borderStyle="round"
         borderColor={one.isHere ? 'claude' : isActive ? 'success' : isAgent ? 'suggestion' : 'subtle'}
-        borderDimColor={isDim}
         paddingX={1}
         marginLeft={isAgent ? 2 * Math.min(lineage.length, 4) : 0}
       >
-        <Text wrap="truncate-end" bold={!isDim} dimColor={isDim}>
+        <Text wrap="truncate-end" bold>
           {isAgent ? <Text color="suggestion">◆</Text> : '⎇'} {nameOf(path) || '(creating…)'}
           {one.isHere && <Text color="claude">{'  ★ here'}</Text>}
           {agent?.type && <Text color="suggestion">{`  [${agent.type}]`}</Text>}
           {one.isRunning && <Text dimColor>{'  running'}</Text>}
-          {one.isRemoved && <Text dimColor>{'  removed'}</Text>}
         </Text>
-        <Text wrap="truncate-end" color="suggestion" dimColor={isDim}>
+        <Text wrap="truncate-end" color="suggestion">
           {madeBy(one, now)}
         </Text>
         {agent && lineage.length > 0 && (
@@ -406,14 +405,13 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
             <Text color="suggestion">◆ "{agent.label}"</Text>
           </Text>
         )}
-        {!snap && path !== '' && !one.isRemoved && <Text dimColor>scanning…</Text>}
+        {!snap && path !== '' && <Text dimColor>scanning…</Text>}
         {details(path, snap, {
           branch: snap?.branch ?? one.branch ?? nameOf(path),
           filesKey: one.toolUseId,
           pullsKey: `${one.toolUseId}:pulls`,
           pullList: (byPath[path] ?? []).filter(pull => pull.isMine),
-          isDim,
-          canAct: path !== '' && !one.isRemoved,
+          canAct: path !== '',
         })}
       </Box>
     )
@@ -437,10 +435,21 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
           filesKey: `${rowKey(row)}:files`,
           pullsKey: `${rowKey(row)}:pulls`,
           pullList: byPath[row.path] ?? [],
-          isDim: false,
           canAct: true,
         })}
       </Box>
+    )
+  }
+
+  // a removed worktree's PRs are not read again, so an open one is shown by its number alone
+  const removedLine = (one: Tracked) => {
+    const pull = (byPath[one.path] ?? []).find(pull => pull.isMine)
+    const pr = pull && `PR #${pull.number}${pull.state === 'open' ? '' : ` ${pull.state}`}`
+
+    return (
+      <Text key={`removed:${one.toolUseId}`} wrap="truncate-end" dimColor>
+        {`  ${isAgentMade(one) ? '◆' : '⎇'} ${nameOf(one.path)}  ${pr ? `${pr}  ` : ''}${madeBy(one, now)}`}
+      </Text>
     )
   }
 
@@ -613,7 +622,8 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
         </Button>
       </Box>
       {list.length === 0 && <Text dimColor>No worktrees in this session yet.</Text>}
-      {[...list].sort(byRecent).map(card)}
+      {list.length > 0 && current.length === 0 && <Text dimColor>No worktrees left; the removed ones are below.</Text>}
+      {[...current].sort(byRecent).map(card)}
       {failed.length > 0 && <Text> </Text>}
       {failed.length > 0 &&
         heading(
@@ -633,6 +643,10 @@ export async function drawPane($: EngineInterface, ui: ElementTable, width: numb
           `${others.length} in ${count(otherRepos.length, 'repository', 'repositories')}`,
         )}
       {otherLines}
+      {removed.length > 0 && <Text> </Text>}
+      {removed.length > 0 &&
+        heading('REMOVED', 'subtle', `${count(removed.length, 'worktree', 'worktrees')} this session made`)}
+      {[...removed].sort(byRecent).map(removedLine)}
     </Box>
   )
 }

@@ -32,7 +32,7 @@ Claude Code mod (function-hook plugin): a pane listing the git worktrees the cur
   open, and at once for one that appears or changes branch, commit or lock; once a minute while the pane is open it
   also reads, beside the refresh queue, the PRs of every worktree's branches with `gh`.
 - `hooks/pane.tsx`: the pane (THIS SESSION cards, PROBLEMS IN THIS SESSION, OTHER WORKTREES rows in the worktrees
-  mod's groups, `groupOf`, each opening a tile drawn by the cards' `details`) and the band.
+  mod's groups, `groupOf`, each opening a tile drawn by the cards' `details`, REMOVED lines) and the band.
 - `hooks/detect.ts`: pure parsing: `git worktree add` in a Bash command (a `for` loop over listed words read once per
   word), `worktree list --porcelain`, lock text, transcript lines.
 - `hooks/history.ts`: on the first refresh, reads the session's and its subagents' transcripts (workflow agents' too)

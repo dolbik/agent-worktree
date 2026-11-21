@@ -340,9 +340,8 @@ test('an agent and ExitWorktree', async ($, on) => {
   const found = await texts($)
   expect(found).toContain(`made by subagent «fix auth» at ${AT}`)
   expect(found.find(one => one.startsWith('◆ agent-1'))).not.toContain('running')
-  const exited = found.find(one => one.startsWith('⎇ fix-auth'))
-  expect(exited).toContain('removed')
-  expect(exited).not.toContain('★ here')
+  expect(found.some(one => one.startsWith('⎇ fix-auth'))).toBe(false)
+  expect(found).toContain(`  ⎇ fix-auth  made by this session at ${AT} · EnterWorktree`)
 })
 
 test('a background agent gets its worktree by id, live badge, View, and a done toast', async ($, on) => {
@@ -928,10 +927,15 @@ test('a worktree removed with git shows as removed and leaves the counts', async
     return { result: { stdout: '', stderr: '', interrupted: false } as never }
   })
   await start($)
+  w.pulls = { side: [{ number: 3, state: 'MERGED', title: 'Side' }] }
   await $.tool.call({ tool: 'Bash', command: 'git worktree add .claude/worktrees/side -b side' })
+  await texts($)
   await $.tool.call({ tool: 'Bash', command: 'git worktree remove .claude/worktrees/side' })
 
-  expect(await texts($)).toContain('⎇ side  removed')
+  const found = await texts($)
+  expect(found).toContain('No worktrees left; the removed ones are below.')
+  expect(found[found.indexOf('REMOVED  1 worktree this session made') - 1]).toBe(' ')
+  expect(found.at(-1)).toBe(`  ⎇ side  PR #3 merged  made by this session at ${AT} · git worktree add`)
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect(await band.find({ type: 'Text', text: /worktree/ })).toBeUndefined()
   await band.unmount()
@@ -1271,7 +1275,8 @@ test('a card keeps PRs only of its branches opened by this gh account, and keeps
 
   w.gone.add(W.path)
   await texts($)
-  expect(await rows()).toEqual(['PR #180 open · Mine'])
+  expect(await rows()).toEqual([])
+  expect((await texts($)).at(-1)).toMatch(/^  ⎇ setup  PR #180  made by this session at .+ · git worktree add$/)
 })
 
 test('a branch made by Bash after the plugin loaded counts for its worktree', async ($, on) => {
